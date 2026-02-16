@@ -1,0 +1,27 @@
+{
+  "name": "safeclaw",
+  "version": "0.1.0",
+  "description": "Secure, sleep-by-default personal AI assistant with runtime tool permissions",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "grammy": "^1.25.0",
+    "dotenv": "^16.4.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
