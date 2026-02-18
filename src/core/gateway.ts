@@ -5,6 +5,8 @@ import { AuditLogger } from "../audit/logger.js";
 import { ProviderStore } from "../providers/store.js";
 import type { ConversationSession } from "../agent/session.js";
 import { createSession } from "../agent/session.js";
+import { McpManager } from "../mcp/manager.js";
+import { readMcpServersConfig } from "../mcp/config.js";
 
 export class Gateway {
   state: GatewayState = "dormant";
@@ -15,6 +17,7 @@ export class Gateway {
   audit: AuditLogger;
   providerStore: ProviderStore;
   conversation: ConversationSession | null = null;
+  mcpManager: McpManager;
 
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private onAutoSleep?: () => void;
@@ -25,6 +28,7 @@ export class Gateway {
     this.approvals = new ApprovalStore(config.approvalTimeoutMs);
     this.audit = new AuditLogger(config.storageDir);
     this.providerStore = new ProviderStore(config.storageDir);
+    this.mcpManager = new McpManager();
     this.onAutoSleep = onAutoSleep;
   }
 
@@ -42,11 +46,16 @@ export class Gateway {
 
     this.state = "awake";
     this.session = { startedAt: Date.now(), lastActivityAt: Date.now() };
-    this.tools.disableAll(); // fresh start: all tools off
+    this.tools.disableAll();
+    this.tools.clearMcp(); // drop stale MCP tools from last session
     this.conversation = createSession();
     this.startInactivityTimer();
 
     await this.audit.log("gateway_wake");
+
+    // Fire-and-forget: MCP discovery runs in background so slow/unreachable
+    // servers don't block the bot. Tools appear in /tools once discovery finishes.
+    void this.connectMcpServers();
 
     const timeout = Math.round(this.config.inactivityTimeoutMs / 60000);
     return (
@@ -57,13 +66,32 @@ export class Gateway {
     );
   }
 
+  private async connectMcpServers(): Promise<void> {
+    const servers = readMcpServersConfig();
+    const names = Object.keys(servers);
+    if (names.length === 0) return;
+
+    console.log(`[mcp] Discovering tools from ${names.length} server(s): ${names.join(", ")}`);
+
+    await Promise.allSettled(
+      names.map(async (name) => {
+        const defs = await this.mcpManager.connectServer(name, servers[name]);
+        for (const def of defs) {
+          this.tools.registerMcp(def);
+        }
+      })
+    );
+  }
+
   async sleep(): Promise<string> {
     this.clearInactivityTimer();
     this.state = "dormant";
     this.session = null;
     this.conversation = null;
     this.tools.disableAll();
+    this.tools.clearMcp();
     this.approvals.cleanupExpired();
+    await this.mcpManager.disconnectAll();
 
     await this.audit.log("gateway_sleep");
     return "Gateway dormant. Goodnight.";
@@ -75,6 +103,8 @@ export class Gateway {
     this.session = null;
     this.conversation = null;
     this.tools.disableAll();
+    this.tools.clearMcp();
+    await this.mcpManager.disconnectAll();
 
     await this.audit.log("gateway_kill");
     return "Emergency shutdown. Gateway stopped.";
@@ -85,6 +115,8 @@ export class Gateway {
     this.session = null;
     this.conversation = null;
     this.tools.disableAll();
+    this.tools.clearMcp();
+    await this.mcpManager.disconnectAll();
 
     await this.audit.log("gateway_auto_sleep", {
       reason: "inactivity timeout",

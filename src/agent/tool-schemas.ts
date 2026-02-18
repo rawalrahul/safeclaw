@@ -9,6 +9,17 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
   const schemas: LLMToolSchema[] = [];
 
   for (const tool of enabledTools) {
+    // MCP tools emit their schema directly from the server's inputSchema
+    if (tool.isMcp) {
+      schemas.push({
+        name: tool.name, // e.g. "mcp__my_server__search_web"
+        description: tool.description,
+        parameters: tool.mcpSchema ?? { type: "object", properties: {} },
+      });
+      continue;
+    }
+
+    // Builtin tools: static hand-crafted schemas
     switch (tool.name) {
       case "filesystem":
         schemas.push(
@@ -145,6 +156,12 @@ export function resolveToolCall(toolCallName: string): {
   toolName: string;
   action: string;
 } | null {
+  // MCP tools: name format is "mcp__<server>__<tool>"
+  if (toolCallName.startsWith("mcp__")) {
+    return { toolName: toolCallName, action: "mcp_call" };
+  }
+
+  // Builtin tool mappings
   const mapping: Record<string, { toolName: string; action: string }> = {
     read_file: { toolName: "filesystem", action: "read_file" },
     list_dir: { toolName: "filesystem", action: "list_dir" },
@@ -157,7 +174,7 @@ export function resolveToolCall(toolCallName: string): {
     send_message: { toolName: "messaging", action: "send_message" },
   };
 
-  return mapping[toolCallName] || null;
+  return mapping[toolCallName] ?? null;
 }
 
 /**
@@ -167,6 +184,14 @@ export function extractToolDetails(
   toolCallName: string,
   input: Record<string, unknown>
 ): { target?: string; content?: string; description: string } {
+  // MCP tools: serialize the full input as JSON into the target field
+  if (toolCallName.startsWith("mcp__")) {
+    return {
+      target: JSON.stringify(input),
+      description: `${toolCallName}: ${JSON.stringify(input).slice(0, 120)}`,
+    };
+  }
+
   switch (toolCallName) {
     case "read_file":
     case "delete_file":

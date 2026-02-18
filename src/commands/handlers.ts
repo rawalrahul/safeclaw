@@ -1,6 +1,6 @@
-import type { ParsedCommand, ToolName } from "../core/types.js";
+import type { ParsedCommand } from "../core/types.js";
 import type { Gateway } from "../core/gateway.js";
-import { TOOL_NAMES } from "../core/types.js";
+import { BUILTIN_TOOL_NAMES } from "../core/types.js";
 import { executeToolAction } from "../tools/executor.js";
 import { PROVIDER_NAMES, DEFAULT_MODELS } from "../providers/types.js";
 import type { ProviderName } from "../providers/types.js";
@@ -170,17 +170,39 @@ async function handleEnable(
 ): Promise<{ reply: string }> {
   const name = args[0]?.toLowerCase();
   if (!name) {
-    return { reply: `Usage: /enable <tool>\nAvailable: ${TOOL_NAMES.join(", ")}` };
-  }
-  if (!gw.tools.isValidTool(name)) {
-    return { reply: `Unknown tool: "${name}"\nAvailable: ${TOOL_NAMES.join(", ")}` };
+    return {
+      reply: `Usage: /enable <tool>\nBuiltin tools: ${BUILTIN_TOOL_NAMES.join(", ")}\nMCP servers: /enable mcp:<server>`,
+    };
   }
 
-  gw.tools.enable(name as ToolName);
+  // MCP server-level enable: "mcp:<server>"
+  if (name.startsWith("mcp:")) {
+    const serverName = name.slice(4);
+    if (!serverName) {
+      return { reply: `Usage: /enable mcp:<server>` };
+    }
+    const count = gw.tools.enableByServer(serverName);
+    if (count === 0) {
+      return {
+        reply: `No tools found for MCP server "${serverName}". Is the server connected? Use /tools to check.`,
+      };
+    }
+    await gw.audit.log("tool_enabled", { mcpServer: serverName, count });
+    return { reply: `Enabled ${count} tool(s) for MCP server "${serverName}".` };
+  }
+
+  // Builtin tool enable
+  if (!BUILTIN_TOOL_NAMES.includes(name as (typeof BUILTIN_TOOL_NAMES)[number])) {
+    return {
+      reply: `Unknown tool: "${name}"\nBuiltin tools: ${BUILTIN_TOOL_NAMES.join(", ")}\nMCP servers: /enable mcp:<server>`,
+    };
+  }
+
+  gw.tools.enable(name);
   await gw.audit.log("tool_enabled", { tool: name });
   return {
     reply: `${name} is now ENABLED.\n` +
-      (gw.tools.isDangerous(name as ToolName)
+      (gw.tools.isDangerous(name)
         ? "Dangerous actions will still require /confirm before executing."
         : ""),
   };
@@ -192,13 +214,35 @@ async function handleDisable(
 ): Promise<{ reply: string }> {
   const name = args[0]?.toLowerCase();
   if (!name) {
-    return { reply: `Usage: /disable <tool>\nAvailable: ${TOOL_NAMES.join(", ")}` };
-  }
-  if (!gw.tools.isValidTool(name)) {
-    return { reply: `Unknown tool: "${name}"\nAvailable: ${TOOL_NAMES.join(", ")}` };
+    return {
+      reply: `Usage: /disable <tool>\nBuiltin tools: ${BUILTIN_TOOL_NAMES.join(", ")}\nMCP servers: /disable mcp:<server>`,
+    };
   }
 
-  gw.tools.disable(name as ToolName);
+  // MCP server-level disable: "mcp:<server>"
+  if (name.startsWith("mcp:")) {
+    const serverName = name.slice(4);
+    if (!serverName) {
+      return { reply: `Usage: /disable mcp:<server>` };
+    }
+    const count = gw.tools.disableByServer(serverName);
+    if (count === 0) {
+      return {
+        reply: `No tools found for MCP server "${serverName}". Use /tools to check.`,
+      };
+    }
+    await gw.audit.log("tool_disabled", { mcpServer: serverName, count });
+    return { reply: `Disabled ${count} tool(s) for MCP server "${serverName}".` };
+  }
+
+  // Builtin tool disable
+  if (!BUILTIN_TOOL_NAMES.includes(name as (typeof BUILTIN_TOOL_NAMES)[number])) {
+    return {
+      reply: `Unknown tool: "${name}"\nBuiltin tools: ${BUILTIN_TOOL_NAMES.join(", ")}\nMCP servers: /disable mcp:<server>`,
+    };
+  }
+
+  gw.tools.disable(name);
   await gw.audit.log("tool_disabled", { tool: name });
   return { reply: `${name} is now DISABLED.` };
 }
@@ -300,8 +344,10 @@ Auth:
 
 Tools:
   /tools — List all tools and their status
-  /enable <tool> — Enable a tool
-  /disable <tool> — Disable a tool
+  /enable <tool> — Enable a builtin tool
+  /disable <tool> — Disable a builtin tool
+  /enable mcp:<server> — Enable all tools for an MCP server
+  /disable mcp:<server> — Disable all tools for an MCP server
 
 Permissions:
   /confirm <id> — Approve a pending action
@@ -312,6 +358,7 @@ Info:
   /audit [n] — Show last N audit events
   /help — Show this help
 
-Available tools: browser, filesystem, shell, code_exec, network, messaging
+Builtin tools: browser, filesystem, shell, code_exec, network, messaging
+MCP tools: auto-discovered on /wake from ~/.claude/settings.json
 
 Security: All tools disabled by default. Dangerous actions always require /confirm.`;

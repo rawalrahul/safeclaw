@@ -1,5 +1,5 @@
 import type { Gateway } from "../core/gateway.js";
-import type { PermissionRequest, ActionType, ToolName } from "../core/types.js";
+import type { PermissionRequest, ActionType } from "../core/types.js";
 import { SAFE_ACTIONS } from "../core/types.js";
 import { resolveProvider } from "../providers/resolver.js";
 import { buildToolSchemas, resolveToolCall, extractToolDetails } from "./tool-schemas.js";
@@ -97,17 +97,23 @@ async function handleToolCalls(
     const details = extractToolDetails(tc.name, tc.input);
 
     // Check if tool is enabled
-    if (!gw.tools.isEnabled(toolName as ToolName)) {
+    const toolDef = gw.tools.get(toolName);
+    if (!toolDef || toolDef.status !== "enabled") {
       const errMsg = `Tool "${toolName}" is not enabled. Ask the owner to /enable ${toolName}.`;
       addToolResult(gw.conversation, tc.id, tc.name, errMsg);
       parts.push(errMsg);
       continue;
     }
 
-    // Safe action → execute immediately
-    if (SAFE_ACTIONS.includes(action as ActionType)) {
+    // Determine if this action is safe (executes immediately) or dangerous (needs /confirm)
+    const isSafe = toolDef.isMcp
+      ? !toolDef.dangerous
+      : SAFE_ACTIONS.includes(action as ActionType);
+
+    if (isSafe) {
+      // Safe action → execute immediately
       await gw.audit.log("action_executed", { tool: toolName, action, target: details.target });
-      const result = await executeToolAction(gw, toolName as ToolName, action as ActionType, details);
+      const result = await executeToolAction(gw, toolName, action as ActionType, details);
       addToolResult(gw.conversation, tc.id, tc.name, result);
 
       // Continue the conversation to let LLM process the result
@@ -128,7 +134,7 @@ async function handleToolCalls(
         const text = followUp.text || result;
         addAssistantMessage(gw.conversation, text);
         return text;
-      } catch (err) {
+      } catch {
         // If follow-up fails, return the raw tool result
         return result;
       }
@@ -136,7 +142,7 @@ async function handleToolCalls(
 
     // Dangerous action → create approval request
     const req = gw.approvals.create(
-      toolName as ToolName,
+      toolName,
       action as ActionType,
       details.description,
       { target: details.target, content: details.content }
@@ -212,7 +218,6 @@ export async function continueAfterToolResult(
 
 /**
  * Fallback for when no LLM provider is configured.
- * Uses the old keyword pattern matching.
  */
 function fallbackResponse(gw: Gateway, text: string): string {
   return (

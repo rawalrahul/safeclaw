@@ -1,5 +1,5 @@
 import { v4 as uuid } from "uuid";
-import type { PermissionRequest, ActionType, ToolName } from "../core/types.js";
+import type { PermissionRequest, ActionType } from "../core/types.js";
 
 export class ApprovalStore {
   private pending: Map<string, PermissionRequest> = new Map();
@@ -10,7 +10,7 @@ export class ApprovalStore {
   }
 
   create(
-    toolName: ToolName,
+    toolName: string,
     action: ActionType,
     description: string,
     extra?: { target?: string; content?: string }

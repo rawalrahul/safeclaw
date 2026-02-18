@@ -1,19 +1,20 @@
 import type { Gateway } from "../core/gateway.js";
-import type { ActionType, ToolName } from "../core/types.js";
+import type { ActionType } from "../core/types.js";
 import { fsReadFile, fsListDir, fsWriteFile, fsDeleteFile } from "./filesystem.js";
 import { simulateBrowser } from "./browser.js";
 import { simulateShell } from "./shell.js";
 import { simulateSendMessage } from "./messaging.js";
 import { simulateCodeExec } from "./code_exec.js";
 import { simulateNetworkRequest } from "./network.js";
+import { parseMcpLLMName } from "../mcp/manager.js";
 
 /**
- * Execute a tool action. Filesystem tools are real; others remain simulated stubs
- * until Phase 4 replaces them.
+ * Execute a tool action. Filesystem tools are real; others remain simulated stubs.
+ * MCP tool calls are dispatched through McpManager.
  */
 export async function executeToolAction(
   gw: Gateway,
-  toolName: ToolName | string,
+  toolName: string,
   action: ActionType | string,
   details: { description: string; target?: string; content?: string }
 ): Promise<string> {
@@ -37,7 +38,7 @@ export async function executeToolAction(
         }
       }
 
-      // ─── Still simulated (Phase 4) ─────────────────────
+      // ─── Still simulated ───────────────────────────────────
       case "browser":
         return simulateBrowser(details.target || details.description).result;
       case "shell":
@@ -51,8 +52,25 @@ export async function executeToolAction(
         return simulateCodeExec(details.target || details.description).result;
       case "network":
         return simulateNetworkRequest(details.target || details.description).result;
-      default:
+
+      default: {
+        // ─── MCP tool call ─────────────────────────────────
+        if (action === "mcp_call") {
+          const parsed = parseMcpLLMName(toolName);
+          if (!parsed) {
+            return `[mcp] Cannot parse MCP tool name: "${toolName}"`;
+          }
+          let args: Record<string, unknown> = {};
+          try {
+            args = details.target ? (JSON.parse(details.target) as Record<string, unknown>) : {};
+          } catch {
+            args = {};
+          }
+          return await gw.mcpManager.callTool(parsed.serverName, parsed.toolName, args);
+        }
+
         return `[Simulated] ${toolName}/${action}: ${details.description}`;
+      }
     }
   } catch (err) {
     return `Error: ${(err as Error).message}`;

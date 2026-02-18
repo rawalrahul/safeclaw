@@ -2,7 +2,7 @@
 export type GatewayState = "dormant" | "awake" | "action_pending" | "shutdown";
 
 // ─── Tool Names ───────────────────────────────────────────────
-export const TOOL_NAMES = [
+export const BUILTIN_TOOL_NAMES = [
   "browser",
   "filesystem",
   "shell",
@@ -11,7 +11,14 @@ export const TOOL_NAMES = [
   "messaging",
 ] as const;
 
-export type ToolName = (typeof TOOL_NAMES)[number];
+export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
+
+// Widened to string to accommodate dynamic MCP tool names (e.g. "mcp__server__tool")
+export type ToolName = string;
+
+// Backward-compat alias so existing imports don't break
+export const TOOL_NAMES = BUILTIN_TOOL_NAMES;
+
 export type ToolStatus = "enabled" | "disabled";
 
 export interface ToolDefinition {
@@ -21,6 +28,11 @@ export interface ToolDefinition {
   status: ToolStatus;
   lastEnabledAt?: number;
   lastDisabledAt?: number;
+  // MCP-only fields
+  isMcp?: true;
+  mcpServer?: string;
+  mcpToolName?: string;
+  mcpSchema?: Record<string, unknown>;
 }
 
 // ─── Authentication ───────────────────────────────────────────
@@ -48,7 +60,8 @@ export type ActionType =
   | "exec_shell"
   | "exec_code"
   | "send_message"
-  | "network_request";
+  | "network_request"
+  | "mcp_call";
 
 export const SAFE_ACTIONS: ActionType[] = ["read_file", "list_dir", "browse_web"];
 
