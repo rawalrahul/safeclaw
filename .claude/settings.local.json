@@ -14,7 +14,8 @@
       "Bash(pandoc:*)",
       "Bash(where:*)",
       "Bash(python3:*)",
-      "Bash(powershell -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\91982\\\\Downloads\\\\safeclaw\\\\extract.ps1\")"
+      "Bash(powershell -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\91982\\\\Downloads\\\\safeclaw\\\\extract.ps1\")",
+      "Bash(node:*)"
     ]
   }
 }
