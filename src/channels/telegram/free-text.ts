@@ -1,45 +1,59 @@
 import type { Gateway } from "../../core/gateway.js";
 import type { ToolName, ActionType } from "../../core/types.js";
 import { SAFE_ACTIONS } from "../../core/types.js";
-import { simulateBrowser } from "../../tools/browser.js";
-import { simulateReadFile, simulateWriteFile } from "../../tools/filesystem.js";
-import { simulateShell } from "../../tools/shell.js";
+import { runAgent } from "../../agent/runner.js";
+import { executeToolAction } from "../../tools/executor.js";
 
 /**
  * Handle free-text messages when the gateway is awake.
  *
- * This is where a real AI agent would be invoked. In this prototype,
- * we detect simple patterns to demonstrate the tool permission flow:
- *
- * - "search ..." / "browse ..." → browser tool
- * - "read ..." / "cat ..." → filesystem tool (read — safe, no confirm needed)
- * - "write ..." / "save ..." → filesystem tool (write — dangerous, needs confirm)
- * - "run ..." / "exec ..." → shell tool (dangerous, needs confirm)
- * - Anything else → echo response (no tool)
- *
- * In production, this would call an LLM agent (Claude/GPT) which decides
- * which tool to use. The gateway intercepts the tool call and applies
- * the same permission checks.
+ * If an LLM provider is configured, routes through the agent (which uses
+ * real tool_use to pick tools). Otherwise falls back to keyword patterns.
  */
 export async function handleFreeText(
   gw: Gateway,
   text: string
 ): Promise<string> {
-  const lower = text.toLowerCase().trim();
-
-  // ─── Pattern: Browser ─────────────────────────────
-  if (lower.startsWith("search ") || lower.startsWith("browse ")) {
-    return tryInvokeTool(gw, "browser", "browse_web", text.slice(text.indexOf(" ") + 1));
+  // If LLM provider is configured, use the agent
+  if (gw.providerStore.getActiveProvider()) {
+    return runAgent(gw, text);
   }
+
+  // ─── Keyword fallback (no LLM configured) ──────────────
+  return keywordFallback(gw, text);
+}
+
+/**
+ * Keyword pattern matching fallback for when no LLM is configured.
+ */
+async function keywordFallback(gw: Gateway, text: string): Promise<string> {
+  const lower = text.toLowerCase().trim();
 
   // ─── Pattern: File Read (safe action) ─────────────
   if (lower.startsWith("read ") || lower.startsWith("cat ")) {
     return tryInvokeTool(gw, "filesystem", "read_file", text.slice(text.indexOf(" ") + 1));
   }
 
+  // ─── Pattern: List Directory (safe action) ────────
+  if (lower.startsWith("list ") || lower.startsWith("ls ") || lower.startsWith("dir ")) {
+    return tryInvokeTool(gw, "filesystem", "list_dir", text.slice(text.indexOf(" ") + 1));
+  }
+
   // ─── Pattern: File Write (dangerous) ──────────────
   if (lower.startsWith("write ") || lower.startsWith("save ")) {
-    return tryInvokeTool(gw, "filesystem", "write_file", text.slice(text.indexOf(" ") + 1));
+    const rest = text.slice(text.indexOf(" ") + 1);
+    const spaceIdx = rest.indexOf(" ");
+    if (spaceIdx === -1) {
+      return `Usage: write <path> <content>`;
+    }
+    const path = rest.slice(0, spaceIdx);
+    const content = rest.slice(spaceIdx + 1);
+    return tryInvokeToolWithContent(gw, "filesystem", "write_file", path, content);
+  }
+
+  // ─── Pattern: Browser ─────────────────────────────
+  if (lower.startsWith("search ") || lower.startsWith("browse ")) {
+    return tryInvokeTool(gw, "browser", "browse_web", text.slice(text.indexOf(" ") + 1));
   }
 
   // ─── Pattern: Shell Execute (dangerous) ───────────
@@ -47,32 +61,58 @@ export async function handleFreeText(
     return tryInvokeTool(gw, "shell", "exec_shell", text.slice(text.indexOf(" ") + 1));
   }
 
+  // ─── Pattern: Code Execution (dangerous) ────────────
+  if (lower.startsWith("eval ") || lower.startsWith("code ") || lower.startsWith("execute ")) {
+    return tryInvokeTool(gw, "code_exec", "exec_code", text.slice(text.indexOf(" ") + 1));
+  }
+
+  // ─── Pattern: Network Request (dangerous) ──────────
+  if (lower.startsWith("fetch ") || lower.startsWith("curl ") || lower.startsWith("request ") || lower.startsWith("http ")) {
+    return tryInvokeTool(gw, "network", "network_request", text.slice(text.indexOf(" ") + 1));
+  }
+
+  // ─── Pattern: Send Message (dangerous) ──────────────
+  if (lower.startsWith("send ") || lower.startsWith("message ") || lower.startsWith("msg ")) {
+    const rest = text.slice(text.indexOf(" ") + 1);
+    const spaceIdx = rest.indexOf(" ");
+    if (spaceIdx === -1) {
+      return `Usage: send <contact> <message>`;
+    }
+    const contact = rest.slice(0, spaceIdx);
+    const message = rest.slice(spaceIdx + 1);
+    return tryInvokeToolWithContent(gw, "messaging", "send_message", `${contact}|${message}`, message);
+  }
+
   // ─── No tool match ────────────────────────────────
   return (
-    `I understood your message but no tool pattern matched.\n\n` +
-    `Try:\n` +
-    `  "search <query>" — uses browser tool\n` +
-    `  "read <path>" — uses filesystem tool\n` +
-    `  "write <path>" — uses filesystem tool (needs /confirm)\n` +
-    `  "run <command>" — uses shell tool (needs /confirm)\n\n` +
-    `Or use /tools to see which tools are enabled.`
+    `No LLM provider configured — using keyword mode.\n\n` +
+    `Set up a provider: /auth anthropic <api-key>\n\n` +
+    `Or use keywords:\n` +
+    `  "read <path>" — read a file\n` +
+    `  "list <path>" — list directory\n` +
+    `  "write <path> <content>" — write a file (needs /confirm)\n` +
+    `  "run <command>" — shell (needs /confirm)\n` +
+    `  "fetch <url>" — network (needs /confirm)\n` +
+    `  "send <contact> <msg>" — messaging (needs /confirm)`
   );
 }
 
-/**
- * Attempt to invoke a tool, checking:
- * 1. Is the tool enabled?
- * 2. Is this a safe or dangerous action?
- * 3. If dangerous → create approval request and wait for /confirm
- * 4. If safe → execute immediately
- */
 async function tryInvokeTool(
   gw: Gateway,
   toolName: ToolName,
   action: ActionType,
   target: string
 ): Promise<string> {
-  // Check if tool is enabled
+  return tryInvokeToolWithContent(gw, toolName, action, target);
+}
+
+async function tryInvokeToolWithContent(
+  gw: Gateway,
+  toolName: ToolName,
+  action: ActionType,
+  target: string,
+  content?: string
+): Promise<string> {
   if (!gw.tools.isEnabled(toolName)) {
     return (
       `The "${toolName}" tool is DISABLED.\n` +
@@ -80,15 +120,24 @@ async function tryInvokeTool(
     );
   }
 
-  // Safe actions execute immediately without confirmation
+  // Safe actions execute immediately
   if (SAFE_ACTIONS.includes(action)) {
     await gw.audit.log("action_executed", { tool: toolName, action, target });
-    return executeAction(toolName, action, target);
+    try {
+      return await executeToolAction(gw, toolName, action, {
+        description: `${action}: ${target}`,
+        target,
+        content,
+      });
+    } catch (err) {
+      return `Error: ${(err as Error).message}`;
+    }
   }
 
   // Dangerous actions require /confirm
   const req = gw.approvals.create(toolName, action, `${action}: ${target}`, {
     target,
+    content,
   });
   gw.state = "action_pending";
 
@@ -100,19 +149,4 @@ async function tryInvokeTool(
   });
 
   return gw.approvals.formatPendingRequest(req);
-}
-
-function executeAction(toolName: ToolName, action: ActionType, target: string): string {
-  switch (toolName) {
-    case "browser":
-      return simulateBrowser(target).result;
-    case "filesystem":
-      if (action === "read_file") return simulateReadFile(target).result;
-      if (action === "write_file") return simulateWriteFile(target, "").result;
-      return `[Simulated] filesystem/${action}: ${target}`;
-    case "shell":
-      return simulateShell(target).result;
-    default:
-      return `[Simulated] ${toolName}/${action}: ${target}`;
-  }
 }

@@ -21,6 +21,7 @@ export function loadConfig(): SafeClawConfig {
   const inactivityMin = parseInt(process.env.INACTIVITY_TIMEOUT_MINUTES || "30", 10);
   const approvalMin = parseInt(process.env.APPROVAL_TIMEOUT_MINUTES || "5", 10);
   const storageDir = process.env.STORAGE_DIR || join(homedir(), ".safeclaw");
+  const workspaceDir = process.env.WORKSPACE_DIR || join(homedir(), "safeclaw-workspace");
 
   return {
     owner: { telegramId: parseInt(ownerId, 10) },
@@ -28,5 +29,6 @@ export function loadConfig(): SafeClawConfig {
     inactivityTimeoutMs: inactivityMin * 60 * 1000,
     approvalTimeoutMs: approvalMin * 60 * 1000,
     storageDir,
+    workspaceDir,
   };
 }

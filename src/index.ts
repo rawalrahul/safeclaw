@@ -34,6 +34,9 @@ async function main(): Promise<void> {
     }
   });
 
+  // Load persisted auth/provider config
+  await gw.init();
+
   console.log("[gateway] State: DORMANT (waiting for /wake from owner)");
   await gw.audit.log("gateway_wake", { event: "process_started", state: "dormant" });
 

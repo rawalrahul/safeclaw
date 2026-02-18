@@ -35,6 +35,7 @@ export interface SafeClawConfig {
   inactivityTimeoutMs: number;
   approvalTimeoutMs: number;
   storageDir: string;
+  workspaceDir: string;
 }
 
 // ─── Permission / Approval ────────────────────────────────────
@@ -42,13 +43,14 @@ export type ActionType =
   | "browse_web"
   | "write_file"
   | "read_file"
+  | "list_dir"
   | "delete_file"
   | "exec_shell"
   | "exec_code"
   | "send_message"
   | "network_request";
 
-export const SAFE_ACTIONS: ActionType[] = ["read_file", "browse_web"];
+export const SAFE_ACTIONS: ActionType[] = ["read_file", "list_dir", "browse_web"];
 
 export interface PermissionRequest {
   approvalId: string;
@@ -104,6 +106,8 @@ export type CommandName =
   | "deny"
   | "status"
   | "audit"
+  | "auth"
+  | "model"
   | "help";
 
 export interface ParsedCommand {

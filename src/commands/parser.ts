@@ -2,7 +2,7 @@ import type { CommandName, ParsedCommand } from "../core/types.js";
 
 const VALID_COMMANDS: CommandName[] = [
   "wake", "sleep", "kill", "tools", "enable", "disable",
-  "confirm", "deny", "status", "audit", "help",
+  "confirm", "deny", "status", "audit", "auth", "model", "help",
 ];
 
 /**

@@ -2,6 +2,9 @@ import type { GatewayState, GatewaySession, SafeClawConfig } from "./types.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { ApprovalStore } from "../permissions/store.js";
 import { AuditLogger } from "../audit/logger.js";
+import { ProviderStore } from "../providers/store.js";
+import type { ConversationSession } from "../agent/session.js";
+import { createSession } from "../agent/session.js";
 
 export class Gateway {
   state: GatewayState = "dormant";
@@ -10,6 +13,8 @@ export class Gateway {
   tools: ToolRegistry;
   approvals: ApprovalStore;
   audit: AuditLogger;
+  providerStore: ProviderStore;
+  conversation: ConversationSession | null = null;
 
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private onAutoSleep?: () => void;
@@ -19,7 +24,12 @@ export class Gateway {
     this.tools = new ToolRegistry();
     this.approvals = new ApprovalStore(config.approvalTimeoutMs);
     this.audit = new AuditLogger(config.storageDir);
+    this.providerStore = new ProviderStore(config.storageDir);
     this.onAutoSleep = onAutoSleep;
+  }
+
+  async init(): Promise<void> {
+    await this.providerStore.load();
   }
 
   // ─── State Transitions ────────────────────────────────────
@@ -33,6 +43,7 @@ export class Gateway {
     this.state = "awake";
     this.session = { startedAt: Date.now(), lastActivityAt: Date.now() };
     this.tools.disableAll(); // fresh start: all tools off
+    this.conversation = createSession();
     this.startInactivityTimer();
 
     await this.audit.log("gateway_wake");
@@ -50,6 +61,7 @@ export class Gateway {
     this.clearInactivityTimer();
     this.state = "dormant";
     this.session = null;
+    this.conversation = null;
     this.tools.disableAll();
     this.approvals.cleanupExpired();
 
@@ -61,6 +73,7 @@ export class Gateway {
     this.clearInactivityTimer();
     this.state = "shutdown";
     this.session = null;
+    this.conversation = null;
     this.tools.disableAll();
 
     await this.audit.log("gateway_kill");
@@ -70,6 +83,7 @@ export class Gateway {
   async autoSleep(): Promise<void> {
     this.state = "dormant";
     this.session = null;
+    this.conversation = null;
     this.tools.disableAll();
 
     await this.audit.log("gateway_auto_sleep", {
