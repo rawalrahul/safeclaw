@@ -2,6 +2,7 @@ import type { LLMProvider, ProviderName } from "./types.js";
 import type { ProviderStore } from "./store.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OpenAIProvider } from "./openai.js";
+import { GeminiProvider } from "./gemini.js";
 
 export interface ResolvedProvider {
   provider: LLMProvider;
@@ -26,6 +27,9 @@ export function resolveProvider(store: ProviderStore): ResolvedProvider | null {
       break;
     case "openai":
       provider = new OpenAIProvider(cred.key);
+      break;
+    case "gemini":
+      provider = new GeminiProvider(cred.key);
       break;
     default:
       return null;
