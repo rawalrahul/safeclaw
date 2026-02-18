@@ -2,7 +2,7 @@
 
 **Sleep-by-default. Tools off by default. You hold the keys.**
 
-SafeClaw is a privacy-first AI assistant you control from your phone via Telegram. You connect it to your own LLM API key (Anthropic Claude or OpenAI GPT). It auto-discovers tools from any MCP servers you've configured for Claude Code.
+SafeClaw is a privacy-first AI assistant you control from your phone via Telegram. You connect it to your own LLM API key (Anthropic Claude, OpenAI GPT, or Google Gemini). It auto-discovers tools from any MCP servers you've configured for Claude Code.
 
 Unlike always-on AI gateways, SafeClaw inverts the defaults:
 
@@ -21,7 +21,10 @@ Unlike always-on AI gateways, SafeClaw inverts the defaults:
 
 - **Node.js 22+** (`node --version` to check)
 - A **Telegram account** (to talk to the bot)
-- An API key from **Anthropic** or **OpenAI** (the LLM that powers the assistant)
+- An API key from at least one LLM provider:
+  - **Anthropic** — [console.anthropic.com](https://console.anthropic.com) → API Keys
+  - **OpenAI** — [platform.openai.com](https://platform.openai.com) → API Keys
+  - **Google Gemini** — [aistudio.google.com](https://aistudio.google.com) → Get API Key *(free tier available)*
 
 ---
 
@@ -63,9 +66,9 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-TELEGRAM_BOT_TOKEN=7412345678:AAFz...   # from BotFather
-OWNER_TELEGRAM_ID=123456789             # your numeric Telegram ID
-INACTIVITY_TIMEOUT_MINUTES=30           # optional, default 30
+TELEGRAM_BOT_TOKEN=7412345678:AAFz...       # from BotFather
+OWNER_TELEGRAM_ID=123456789                 # your numeric Telegram ID
+INACTIVITY_TIMEOUT_MINUTES=30               # optional, default 30
 WORKSPACE_DIR=/home/you/safeclaw-workspace  # optional, default ~/safeclaw-workspace
 ```
 
@@ -103,37 +106,33 @@ Security status:
 
 ## Step 6 — Connect to an LLM
 
-Open Telegram, find your bot, and run one of these commands. **This step works even while the gateway is dormant** — you don't need to `/wake` first.
+Open Telegram, find your bot, and store your API key. **These commands work even while the gateway is dormant** — you don't need to `/wake` first.
 
-### Anthropic Claude (recommended)
-
-Get your key at [console.anthropic.com](https://console.anthropic.com) → API Keys.
+### Anthropic Claude
 
 ```
 /auth anthropic sk-ant-api03-...
 ```
 
-SafeClaw defaults to `claude-sonnet-4-5` — a good balance of speed and quality.
+Default model: `claude-sonnet-4-5-20250929`
 
 ### OpenAI GPT
-
-Get your key at [platform.openai.com](https://platform.openai.com) → API Keys.
 
 ```
 /auth openai sk-proj-...
 ```
 
-SafeClaw defaults to `gpt-4o`.
+Default model: `gpt-4o`
 
-### Google Gemini
-
-Get your key at [aistudio.google.com](https://aistudio.google.com) → Get API Key. There is a **free tier** with generous rate limits — no billing required to get started.
+### Google Gemini (free tier available)
 
 ```
 /auth gemini AIza...
 ```
 
-SafeClaw defaults to `gemini-2.0-flash`.
+Default model: `gemini-2.0-flash`. Get a free key at [aistudio.google.com](https://aistudio.google.com) — no billing required.
+
+---
 
 ### Check what's configured
 
@@ -141,18 +140,66 @@ SafeClaw defaults to `gemini-2.0-flash`.
 /auth status
 ```
 
-### Switch models
+Output example:
+```
+Auth Status:
+  Active: anthropic / claude-sonnet-4-5-20250929
+
+  Providers:
+    anthropic: sk-ant-ap...a1b2  (active)
+    openai: not configured
+    gemini: AIzaSy...x9y8
+```
+
+### Remove a stored API key
 
 ```
-/model anthropic/claude-opus-4-6        # Anthropic Opus — most capable
-/model anthropic/claude-haiku-4-5       # Anthropic Haiku — fastest, cheapest
-/model openai/gpt-4o-mini               # OpenAI mini — fastest, cheapest
-/model gemini/gemini-1.5-pro            # Gemini Pro — higher quality
-/model gemini/gemini-2.0-flash          # Gemini Flash — fastest Gemini
-/model                                  # Show current selection
+/auth remove anthropic
+/auth remove openai
+/auth remove gemini
 ```
 
-Credentials are stored in `~/.safeclaw/auth.json` (your home directory, not the project folder). They persist across restarts.
+If you remove the active provider, SafeClaw automatically switches to another configured one. If it was the last key, the active provider is cleared and you'll need to add a new one before the LLM agent can respond.
+
+---
+
+### Browse and switch models
+
+`/model` fetches the live model list directly from each provider's API — no hardcoded lists to go stale.
+
+```
+/model                          → list all models for every configured provider
+/model list anthropic           → list only Anthropic models
+/model list openai              → list only OpenAI models
+/model list gemini              → list only Gemini models
+```
+
+Example output:
+```
+Active: anthropic / claude-sonnet-4-5-20250929
+
+anthropic — 6 model(s):
+  ▶ claude-sonnet-4-5-20250929  (Claude Sonnet 4.5)
+    claude-opus-4-6  (Claude Opus 4.6)
+    claude-haiku-4-5-20251001  (Claude Haiku 4.5)
+    ...
+
+gemini — 12 model(s):
+    gemini-2.0-flash  (Gemini 2.0 Flash)
+    gemini-1.5-pro  (Gemini 1.5 Pro)
+    ...
+
+Switch with: /model <provider>/<model-id>
+```
+
+To switch:
+```
+/model anthropic/claude-opus-4-6
+/model openai/gpt-4o-mini
+/model gemini/gemini-1.5-pro
+```
+
+Credentials are stored in `~/.safeclaw/auth.json`. They persist across restarts.
 
 ---
 
@@ -196,18 +243,19 @@ Bot:  Approved. [LLM follow-up: "Done! I've written hn_fetch.py ..."]
 | Command | Works dormant? | Description |
 |---------|---------------|-------------|
 | `/wake` | Yes | Wake the gateway |
-| `/sleep` | No | Return to dormant, disconnect MCP |
+| `/sleep` | No | Return to dormant, disconnect MCP servers |
 | `/kill` | No | Emergency shutdown, stops the process |
 
 ### LLM Provider Setup
 
 | Command | Works dormant? | Description |
 |---------|---------------|-------------|
-| `/auth <provider> <api-key>` | Yes | Store API key (`anthropic` or `openai`) |
-| `/auth status` | Yes | Show which providers are configured |
-| `/auth remove <provider>` | Yes | Remove stored credentials |
+| `/auth <provider> <api-key>` | Yes | Store API key (`anthropic`, `openai`, or `gemini`) |
+| `/auth status` | Yes | Show all configured providers and the active one |
+| `/auth remove <provider>` | Yes | Delete a stored API key |
+| `/model` | Yes | List all available models fetched live from provider APIs |
+| `/model list <provider>` | Yes | List models for one specific provider |
 | `/model <provider/model>` | Yes | Switch to a specific model |
-| `/model` | Yes | Show current provider and model |
 
 ### Tools
 
@@ -226,8 +274,8 @@ Bot:  Approved. [LLM follow-up: "Done! I've written hn_fetch.py ..."]
 | Command | Description |
 |---------|-------------|
 | `/confirm <id>` | Approve a pending dangerous action |
-| `/deny <id>` | Reject it |
-| `/confirm` | List all pending approvals |
+| `/deny <id>` | Reject a pending action |
+| `/confirm` | List all pending approvals with their IDs |
 
 ### Info
 
@@ -235,7 +283,7 @@ Bot:  Approved. [LLM follow-up: "Done! I've written hn_fetch.py ..."]
 |---------|-------------|
 | `/status` | Gateway state, uptime, idle time, enabled tools |
 | `/audit [n]` | Last N audit log events (default 10) |
-| `/help` | All commands inline |
+| `/help` | All commands inline in Telegram |
 
 ---
 
@@ -246,11 +294,11 @@ SafeClaw reads the MCP server configuration from your Claude Code settings and a
 ### How it works
 
 1. You send `/wake`
-2. SafeClaw immediately replies (it doesn't block on MCP)
+2. SafeClaw immediately replies (it doesn't block on MCP discovery)
 3. In the background it reads `~/.claude/settings.json` → `mcpServers`
 4. For each configured server it connects, calls `listTools()`, and registers the results
 5. Run `/tools` a moment later to see the discovered tools grouped by server
-6. Tools are classified as safe or dangerous by keyword heuristics
+6. Tools are classified as safe or dangerous by keyword heuristics (read/get/list → safe; write/delete/create/send → dangerous)
 
 ### Enabling MCP tools
 
@@ -280,7 +328,7 @@ SafeClaw reads the MCP server configuration from your Claude Code settings and a
 }
 ```
 
-Environment variable placeholders like `${GITHUB_TOKEN}` are resolved from the process environment at startup. Servers that fail to connect (wrong command, network error, 401/403 auth) are skipped with a console warning — they don't crash the bot.
+Environment variable placeholders like `${GITHUB_TOKEN}` are resolved from the process environment. Servers that fail to connect (wrong command, network error, 401/403 auth) are skipped with a console warning — they don't crash the bot.
 
 > **Note:** HTTP/SSE MCP servers are not yet supported. Only `stdio` servers (those with a `command` field) are connected.
 
@@ -319,14 +367,12 @@ You:   /enable mcp:github
 Bot:   Enabled 3 tool(s) for MCP server "github".
 
 You:   search for typescript MCP server examples on GitHub
-Bot:   [LLM calls mcp__github__search_repositories immediately — it's a read/safe tool]
-       Found 12 repositories matching "typescript MCP server":
+Bot:   Found 12 repositories matching "typescript MCP server":
        1. modelcontextprotocol/typescript-sdk — ...
        2. ...
 
 You:   write those results to a file called mcp-examples.md
 Bot:   Action pending approval:
-         Tool: mcp__github__search_repositories → filesystem/write_file
          Details: write_file: mcp-examples.md (1.4 KB)
          Expires in: 300s
        Reply /confirm 9f2e1a8b or /deny 9f2e1a8b
@@ -350,7 +396,7 @@ Bot:   Gateway dormant. Goodnight.
 - **Auto-sleep**: Inactivity timeout (default 30 min) returns to dormant automatically
 - **Full audit trail**: Every event logged to `~/.safeclaw/audit.jsonl`
 - **Separate identity**: The bot is its own Telegram account, never acts as you
-- **MCP isolation**: Each MCP server is connected as a subprocess; crashing servers don't crash SafeClaw
+- **MCP isolation**: Each MCP server runs as a subprocess; crashing servers don't crash SafeClaw
 - **Workspace sandboxing**: Filesystem tool is restricted to `WORKSPACE_DIR` — no escape via `../`
 
 ---
@@ -372,9 +418,11 @@ safeclaw/
 │   │   ├── sender.ts             # Outbound with message chunking for long replies
 │   │   └── free-text.ts          # Routes plain messages to LLM agent
 │   ├── providers/
-│   │   ├── types.ts              # LLMProvider interface, credential types
+│   │   ├── types.ts              # LLMProvider interface, ProviderName, defaults
 │   │   ├── anthropic.ts          # Anthropic Claude API client
 │   │   ├── openai.ts             # OpenAI API client
+│   │   ├── gemini.ts             # Google Gemini API client
+│   │   ├── models.ts             # Live model listing from provider APIs
 │   │   ├── store.ts              # Persists API keys to ~/.safeclaw/auth.json
 │   │   └── resolver.ts           # Picks the active provider and model
 │   ├── agent/
@@ -421,7 +469,8 @@ safeclaw/
 - Permission confirmation flow with 5-minute expiry
 - JSONL audit logging to `~/.safeclaw/audit.jsonl`
 - Telegram bot integration (grammy)
-- LLM agent integration — **Anthropic Claude and OpenAI GPT** with real tool_use calls
+- LLM agent — **Anthropic Claude, OpenAI GPT, and Google Gemini** with real tool_use/function calling
+- Live model listing fetched from provider APIs (`/model`)
 - Persistent API key storage in `~/.safeclaw/auth.json`
 - **Real filesystem** — read, write, list, delete (sandboxed to `WORKSPACE_DIR`)
 - **MCP auto-discovery** — stdio servers from `~/.claude/settings.json`
@@ -458,7 +507,8 @@ These stubs demonstrate the full permission flow safely. Replacing them with rea
 
 - [x] Gateway state machine, Telegram integration, commands, audit
 - [x] Real filesystem tools with path sandboxing
-- [x] LLM agent (Anthropic Claude + OpenAI GPT) with tool_use
+- [x] LLM agent — Anthropic Claude, OpenAI GPT, and Google Gemini — with tool calling
+- [x] Live model listing fetched from provider APIs
 - [x] MCP tool auto-discovery from `~/.claude/settings.json`
 - [ ] Real browser tool (Playwright / Puppeteer)
 - [ ] Real shell execution (with timeout and output limits)

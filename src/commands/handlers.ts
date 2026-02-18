@@ -5,6 +5,7 @@ import { executeToolAction } from "../tools/executor.js";
 import { PROVIDER_NAMES, DEFAULT_MODELS } from "../providers/types.js";
 import type { ProviderName } from "../providers/types.js";
 import { continueAfterToolResult } from "../agent/runner.js";
+import { fetchModels } from "../providers/models.js";
 
 /**
  * Handle a parsed command and return the response message.
@@ -127,31 +128,33 @@ async function handleModel(
   gw: Gateway,
   args: string[]
 ): Promise<{ reply: string }> {
-  const spec = args[0];
+  const spec = args[0]?.toLowerCase();
 
-  // /model (no args) — show current
-  if (!spec) {
-    const provider = gw.providerStore.getActiveProvider();
-    const model = gw.providerStore.getActiveModel();
-    if (!provider) return { reply: "No provider configured. Use /auth <provider> <api-key> first." };
-    return { reply: `Current model: ${provider} / ${model}` };
+  // /model or /model list [provider] — list available models from the API
+  if (!spec || spec === "list") {
+    const providerFilter = spec === "list" ? args[1]?.toLowerCase() : undefined;
+    return listAvailableModels(gw, providerFilter);
   }
 
-  // /model <provider/model> or /model <provider>
+  // /model <provider/model> or /model <provider> — set model
   const slashIdx = spec.indexOf("/");
   let provider: string;
   let model: string;
 
   if (slashIdx !== -1) {
-    provider = spec.slice(0, slashIdx).toLowerCase();
+    provider = spec.slice(0, slashIdx);
     model = spec.slice(slashIdx + 1);
   } else {
-    provider = spec.toLowerCase();
+    provider = spec;
     model = DEFAULT_MODELS[provider as ProviderName] || spec;
   }
 
   if (!gw.providerStore.isValidProvider(provider)) {
-    return { reply: `Unknown provider: "${provider}"\nAvailable: ${PROVIDER_NAMES.join(", ")}` };
+    return {
+      reply:
+        `Unknown provider: "${provider}"\nAvailable: ${PROVIDER_NAMES.join(", ")}\n\n` +
+        `Run /model to see all available models.`,
+    };
   }
 
   if (!gw.providerStore.hasProvider(provider as ProviderName)) {
@@ -160,6 +163,65 @@ async function handleModel(
 
   await gw.providerStore.setActiveModel(provider as ProviderName, model);
   return { reply: `Active model set to: ${provider} / ${model}` };
+}
+
+async function listAvailableModels(
+  gw: Gateway,
+  providerFilter?: string
+): Promise<{ reply: string }> {
+  // Validate provider filter
+  if (providerFilter && !gw.providerStore.isValidProvider(providerFilter)) {
+    return {
+      reply: `Unknown provider: "${providerFilter}"\nAvailable: ${PROVIDER_NAMES.join(", ")}`,
+    };
+  }
+  if (providerFilter && !gw.providerStore.hasProvider(providerFilter as ProviderName)) {
+    return {
+      reply: `No API key for "${providerFilter}". Use /auth ${providerFilter} <api-key> first.`,
+    };
+  }
+
+  const providers = providerFilter
+    ? [providerFilter as ProviderName]
+    : PROVIDER_NAMES.filter((p) => gw.providerStore.hasProvider(p));
+
+  if (providers.length === 0) {
+    return {
+      reply:
+        `No providers configured. Use /auth <provider> <api-key> first.\n` +
+        `Providers: ${PROVIDER_NAMES.join(", ")}`,
+    };
+  }
+
+  const activeProvider = gw.providerStore.getActiveProvider();
+  const activeModel = gw.providerStore.getActiveModel();
+
+  const sections: string[] = [];
+  if (activeProvider && activeModel) {
+    sections.push(`Active: ${activeProvider} / ${activeModel}\n`);
+  }
+
+  for (const provider of providers) {
+    const cred = gw.providerStore.getCredential(provider);
+    if (!cred) continue;
+
+    try {
+      const models = await fetchModels(provider, cred.key);
+      const lines = [`${provider} — ${models.length} model(s):`];
+      for (const m of models) {
+        const isCurrent = provider === activeProvider && m.id === activeModel;
+        const label =
+          m.displayName && m.displayName !== m.id ? `${m.id}  (${m.displayName})` : m.id;
+        lines.push(`  ${isCurrent ? "▶" : " "} ${label}`);
+      }
+      sections.push(lines.join("\n"));
+    } catch (err) {
+      sections.push(`${provider}: could not fetch models — ${(err as Error).message}`);
+    }
+  }
+
+  sections.push(`\nSwitch with: /model <provider>/<model-id>`);
+  return { reply: sections.join("\n") };
 }
 
 // ─── Tool Enable/Disable ──────────────────────────────────
@@ -339,8 +401,9 @@ Auth:
   /auth <provider> <api-key> — Store API key (anthropic, openai)
   /auth status — Show connected providers
   /auth remove <provider> — Remove stored credentials
-  /model <provider/model> — Set active model
-  /model — Show current model
+  /model — List all available models (fetched live from provider APIs)
+  /model list <provider> — List models for one provider
+  /model <provider/model> — Switch to a specific model
 
 Tools:
   /tools — List all tools and their status
