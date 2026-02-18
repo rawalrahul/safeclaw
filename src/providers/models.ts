@@ -1,4 +1,5 @@
 import type { ProviderName } from "./types.js";
+import { resolveOllamaUrl } from "./ollama.js";
 
 export interface ModelInfo {
   id: string;         // The ID to pass to the API / /model command
@@ -71,6 +72,25 @@ async function fetchGeminiModels(apiKey: string): Promise<ModelInfo[]> {
     }));
 }
 
+// ─── Ollama ───────────────────────────────────────────────────
+
+async function fetchOllamaModels(keyOrUrl: string): Promise<ModelInfo[]> {
+  const baseUrl = resolveOllamaUrl(keyOrUrl);
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/api/tags`);
+  } catch {
+    throw new Error(`Cannot reach Ollama at ${baseUrl}. Is it running? (ollama serve)`);
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  const data = (await res.json()) as {
+    models: Array<{ name: string; model?: string }>;
+  };
+
+  return (data.models ?? []).map((m) => ({ id: m.model ?? m.name }));
+}
+
 // ─── Public API ───────────────────────────────────────────────
 
 export async function fetchModels(
@@ -84,5 +104,7 @@ export async function fetchModels(
       return fetchOpenAIModels(apiKey);
     case "gemini":
       return fetchGeminiModels(apiKey);
+    case "ollama":
+      return fetchOllamaModels(apiKey);
   }
 }

@@ -398,7 +398,9 @@ Lifecycle:
   /kill — Emergency shutdown
 
 Auth:
-  /auth <provider> <api-key> — Store API key (anthropic, openai)
+  /auth <provider> <api-key> — Store API key (anthropic, openai, gemini)
+  /auth ollama local — Use local Ollama (http://localhost:11434)
+  /auth ollama <url> — Use Ollama at a custom URL
   /auth status — Show connected providers
   /auth remove <provider> — Remove stored credentials
   /model — List all available models (fetched live from provider APIs)

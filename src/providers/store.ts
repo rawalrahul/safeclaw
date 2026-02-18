@@ -93,9 +93,13 @@ export class ProviderStore {
     for (const name of PROVIDER_NAMES) {
       const cred = this.data.providers[name];
       if (cred) {
-        const masked = cred.key.slice(0, 8) + "..." + cred.key.slice(-4);
+        // Ollama stores a URL, not a secret — display it as-is
+        const display =
+          name === "ollama"
+            ? cred.key
+            : cred.key.slice(0, 8) + "..." + cred.key.slice(-4);
         const marker = name === active ? " (active)" : "";
-        lines.push(`    ${name}: ${masked}${marker}`);
+        lines.push(`    ${name}: ${display}${marker}`);
       } else {
         lines.push(`    ${name}: not configured`);
       }

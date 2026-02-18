@@ -1,8 +1,8 @@
 // ─── Provider Types ──────────────────────────────────────────
 
-export type ProviderName = "anthropic" | "openai" | "gemini";
+export type ProviderName = "anthropic" | "openai" | "gemini" | "ollama";
 
-export const PROVIDER_NAMES: ProviderName[] = ["anthropic", "openai", "gemini"];
+export const PROVIDER_NAMES: ProviderName[] = ["anthropic", "openai", "gemini", "ollama"];
 
 export interface ApiKeyCredential {
   type: "api_key";
@@ -29,6 +29,7 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
   anthropic: "claude-sonnet-4-5-20250929",
   openai: "gpt-4o",
   gemini: "gemini-2.0-flash",
+  ollama: "llama3.2",
 };
 
 // ─── LLM Message Types ──────────────────────────────────────

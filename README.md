@@ -21,10 +21,11 @@ Unlike always-on AI gateways, SafeClaw inverts the defaults:
 
 - **Node.js 22+** (`node --version` to check)
 - A **Telegram account** (to talk to the bot)
-- An API key from at least one LLM provider:
+- An API key from at least one LLM provider, **or** a locally running Ollama instance:
   - **Anthropic** — [console.anthropic.com](https://console.anthropic.com) → API Keys
   - **OpenAI** — [platform.openai.com](https://platform.openai.com) → API Keys
   - **Google Gemini** — [aistudio.google.com](https://aistudio.google.com) → Get API Key *(free tier available)*
+  - **Ollama** — free, runs entirely on your machine, no API key required (see below)
 
 ---
 
@@ -132,6 +133,91 @@ Default model: `gpt-4o`
 
 Default model: `gemini-2.0-flash`. Get a free key at [aistudio.google.com](https://aistudio.google.com) — no billing required.
 
+### Ollama (local LLM — no API key needed)
+
+Ollama lets you run open-source LLMs entirely on your own machine. No cloud account, no usage costs, full privacy.
+
+#### Step A — Install Ollama
+
+```bash
+# macOS / Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Windows
+# Download the installer from https://ollama.com/download
+```
+
+#### Step B — Pull a model
+
+```bash
+ollama pull llama3.2          # recommended — fast, supports tool calling
+ollama pull qwen2.5           # strong alternative with tool calling
+ollama pull mistral-nemo      # good balance of speed and quality
+```
+
+> **Tool calling note:** SafeClaw's LLM agent relies on structured tool calling. Use models known to support it: `llama3.1`, `llama3.2`, `qwen2.5`, `mistral-nemo`. General chat models (`phi3`, `gemma`, etc.) may respond without tool calls even when tools are enabled.
+
+#### Step C — Start the Ollama server
+
+```bash
+ollama serve
+```
+
+Ollama binds to `http://localhost:11434` by default. Leave this running while SafeClaw is active.
+
+#### Step D — Register Ollama with SafeClaw
+
+In Telegram, tell SafeClaw where Ollama is running. **This works even while the gateway is dormant.**
+
+```
+/auth ollama local
+```
+
+`local` is a shorthand for `http://localhost:11434`. If Ollama is on another machine or a different port, pass the full URL:
+
+```
+/auth ollama http://192.168.1.50:11434
+```
+
+#### Step E — Select a model
+
+```
+/model ollama/llama3.2
+```
+
+Or list all models currently installed in your Ollama instance:
+
+```
+/model list ollama
+```
+
+Example output:
+```
+Active: ollama / llama3.2
+
+ollama — 3 model(s):
+  ▶ llama3.2
+    qwen2.5
+    mistral-nemo
+
+Switch with: /model <provider>/<model-id>
+```
+
+#### Running Ollama on a remote machine / GPU server
+
+If you have a machine with a GPU, you can run Ollama there and point SafeClaw at it:
+
+```bash
+# On the GPU server — bind to all interfaces
+OLLAMA_HOST=0.0.0.0 ollama serve
+```
+
+```
+# In Telegram
+/auth ollama http://<server-ip>:11434
+/model ollama/llama3.3
+```
+
 ---
 
 ### Check what's configured
@@ -149,6 +235,7 @@ Auth Status:
     anthropic: sk-ant-ap...a1b2  (active)
     openai: not configured
     gemini: AIzaSy...x9y8
+    ollama: http://localhost:11434
 ```
 
 ### Remove a stored API key
@@ -157,6 +244,7 @@ Auth Status:
 /auth remove anthropic
 /auth remove openai
 /auth remove gemini
+/auth remove ollama
 ```
 
 If you remove the active provider, SafeClaw automatically switches to another configured one. If it was the last key, the active provider is cleared and you'll need to add a new one before the LLM agent can respond.
@@ -250,7 +338,7 @@ Bot:  Approved. [LLM follow-up: "Done! I've written hn_fetch.py ..."]
 
 | Command | Works dormant? | Description |
 |---------|---------------|-------------|
-| `/auth <provider> <api-key>` | Yes | Store API key (`anthropic`, `openai`, or `gemini`) |
+| `/auth <provider> <api-key>` | Yes | Store API key (`anthropic`, `openai`, `gemini`) or Ollama URL (`/auth ollama local`) |
 | `/auth status` | Yes | Show all configured providers and the active one |
 | `/auth remove <provider>` | Yes | Delete a stored API key |
 | `/model` | Yes | List all available models fetched live from provider APIs |
@@ -422,6 +510,7 @@ safeclaw/
 │   │   ├── anthropic.ts          # Anthropic Claude API client
 │   │   ├── openai.ts             # OpenAI API client
 │   │   ├── gemini.ts             # Google Gemini API client
+│   │   ├── ollama.ts             # Ollama local LLM client (OpenAI-compatible)
 │   │   ├── models.ts             # Live model listing from provider APIs
 │   │   ├── store.ts              # Persists API keys to ~/.safeclaw/auth.json
 │   │   └── resolver.ts           # Picks the active provider and model
@@ -469,7 +558,7 @@ safeclaw/
 - Permission confirmation flow with 5-minute expiry
 - JSONL audit logging to `~/.safeclaw/audit.jsonl`
 - Telegram bot integration (grammy)
-- LLM agent — **Anthropic Claude, OpenAI GPT, and Google Gemini** with real tool_use/function calling
+- LLM agent — **Anthropic Claude, OpenAI GPT, Google Gemini, and Ollama (local)** with real tool_use/function calling
 - Live model listing fetched from provider APIs (`/model`)
 - Persistent API key storage in `~/.safeclaw/auth.json`
 - **Real filesystem** — read, write, list, delete (sandboxed to `WORKSPACE_DIR`)
@@ -497,6 +586,7 @@ These stubs demonstrate the full permission flow safely. Replacing them with rea
 | LLM: Anthropic | Anthropic Messages API (raw fetch) |
 | LLM: OpenAI | OpenAI Chat Completions API (raw fetch) |
 | LLM: Gemini | Google Generative Language API (raw fetch) |
+| LLM: Ollama | Ollama OpenAI-compatible API (local, raw fetch) |
 | MCP | `@modelcontextprotocol/sdk` ^1.12.0 |
 | Storage | File-based JSON + JSONL (no database) |
 | Dev runner | `tsx` (TypeScript execute, no build step needed) |
@@ -507,8 +597,8 @@ These stubs demonstrate the full permission flow safely. Replacing them with rea
 
 - [x] Gateway state machine, Telegram integration, commands, audit
 - [x] Real filesystem tools with path sandboxing
-- [x] LLM agent — Anthropic Claude, OpenAI GPT, and Google Gemini — with tool calling
-- [x] Live model listing fetched from provider APIs
+- [x] LLM agent — Anthropic Claude, OpenAI GPT, Google Gemini, and Ollama (local) — with tool calling
+- [x] Live model listing fetched from provider APIs (+ local listing for Ollama)
 - [x] MCP tool auto-discovery from `~/.claude/settings.json`
 - [ ] Real browser tool (Playwright / Puppeteer)
 - [ ] Real shell execution (with timeout and output limits)
