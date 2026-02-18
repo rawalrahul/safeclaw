@@ -253,10 +253,26 @@ async function handleEnable(
     return { reply: `Enabled ${count} tool(s) for MCP server "${serverName}".` };
   }
 
+  // Dynamic skill enable: "skill__<name>"
+  if (name.startsWith("skill__")) {
+    const toolDef = gw.tools.get(name);
+    if (!toolDef) {
+      return {
+        reply: `Skill "${name}" not found. Use /tools to see installed skills.`,
+      };
+    }
+    gw.tools.enable(name);
+    await gw.audit.log("tool_enabled", { tool: name });
+    return {
+      reply: `${name} is now ENABLED.\n` +
+        (toolDef.dangerous ? "Dangerous actions will still require /confirm before executing." : ""),
+    };
+  }
+
   // Builtin tool enable
   if (!BUILTIN_TOOL_NAMES.includes(name as (typeof BUILTIN_TOOL_NAMES)[number])) {
     return {
-      reply: `Unknown tool: "${name}"\nBuiltin tools: ${BUILTIN_TOOL_NAMES.join(", ")}\nMCP servers: /enable mcp:<server>`,
+      reply: `Unknown tool: "${name}"\nBuiltin tools: ${BUILTIN_TOOL_NAMES.join(", ")}\nMCP servers: /enable mcp:<server>\nSkills: /enable skill__<name>`,
     };
   }
 
@@ -297,10 +313,21 @@ async function handleDisable(
     return { reply: `Disabled ${count} tool(s) for MCP server "${serverName}".` };
   }
 
+  // Dynamic skill disable: "skill__<name>"
+  if (name.startsWith("skill__")) {
+    const toolDef = gw.tools.get(name);
+    if (!toolDef) {
+      return { reply: `Skill "${name}" not found. Use /tools to see installed skills.` };
+    }
+    gw.tools.disable(name);
+    await gw.audit.log("tool_disabled", { tool: name });
+    return { reply: `${name} is now DISABLED.` };
+  }
+
   // Builtin tool disable
   if (!BUILTIN_TOOL_NAMES.includes(name as (typeof BUILTIN_TOOL_NAMES)[number])) {
     return {
-      reply: `Unknown tool: "${name}"\nBuiltin tools: ${BUILTIN_TOOL_NAMES.join(", ")}\nMCP servers: /disable mcp:<server>`,
+      reply: `Unknown tool: "${name}"\nBuiltin tools: ${BUILTIN_TOOL_NAMES.join(", ")}\nMCP servers: /disable mcp:<server>\nSkills: /disable skill__<name>`,
     };
   }
 
@@ -413,6 +440,8 @@ Tools:
   /disable <tool> — Disable a builtin tool
   /enable mcp:<server> — Enable all tools for an MCP server
   /disable mcp:<server> — Disable all tools for an MCP server
+  /enable skill__<name> — Enable a dynamically created skill
+  /disable skill__<name> — Disable a dynamically created skill
 
 Permissions:
   /confirm <id> — Approve a pending action

@@ -5,10 +5,6 @@ export type GatewayState = "dormant" | "awake" | "action_pending" | "shutdown";
 export const BUILTIN_TOOL_NAMES = [
   "browser",
   "filesystem",
-  "shell",
-  "code_exec",
-  "network",
-  "messaging",
 ] as const;
 
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
@@ -33,6 +29,10 @@ export interface ToolDefinition {
   mcpServer?: string;
   mcpToolName?: string;
   mcpSchema?: Record<string, unknown>;
+  // Dynamic skill fields
+  isDynamic?: true;
+  skillName?: string;
+  skillParameters?: Record<string, unknown>;
 }
 
 // ─── Authentication ───────────────────────────────────────────
@@ -61,7 +61,9 @@ export type ActionType =
   | "exec_code"
   | "send_message"
   | "network_request"
-  | "mcp_call";
+  | "mcp_call"
+  | "skill_call"
+  | "skill_install";
 
 export const SAFE_ACTIONS: ActionType[] = ["read_file", "list_dir", "browse_web"];
 
@@ -96,9 +98,13 @@ export type AuditEventType =
   | "permission_approved"
   | "permission_denied"
   | "permission_expired"
+  | "tool_called"
+  | "tool_result"
   | "action_executed"
   | "action_failed"
-  | "command_received";
+  | "command_received"
+  | "skill_proposed"
+  | "skill_installed";
 
 export interface AuditEvent {
   id: string;

@@ -1,6 +1,71 @@
 import type { ToolDefinition } from "../core/types.js";
 import type { LLMToolSchema } from "../providers/types.js";
 
+// ─── Meta-tool: always injected regardless of enabled tools ──
+
+/**
+ * The request_capability tool is always available to the LLM.
+ * The agent calls it when it realises it cannot complete a task with current tools.
+ * It proposes a new skill (name + implementation code) for the owner to approve.
+ */
+export const REQUEST_CAPABILITY_SCHEMA: LLMToolSchema = {
+  name: "request_capability",
+  description:
+    "Call this when you cannot complete the user's request because you lack a required skill " +
+    "(e.g. PDF generation, spreadsheet creation, image processing, web scraping). " +
+    "Provide a complete, working ES module JavaScript implementation. " +
+    "The owner will review the code and approve or deny before it is installed.",
+  parameters: {
+    type: "object",
+    properties: {
+      skill_name: {
+        type: "string",
+        description:
+          "Short snake_case identifier for the new skill, e.g. pdf_create, ppt_generate, image_resize",
+      },
+      skill_description: {
+        type: "string",
+        description: "One-sentence description shown to the owner in the approval prompt",
+      },
+      reason: {
+        type: "string",
+        description: "Why this skill is needed to complete the current user request",
+      },
+      dangerous: {
+        type: "boolean",
+        description:
+          "true if the skill writes files, makes network calls, spawns processes, or has side effects",
+      },
+      parameters_schema: {
+        type: "object",
+        description: "JSON Schema object describing the skill's input parameters",
+      },
+      implementation_code: {
+        type: "string",
+        description:
+          "Complete ES module JavaScript (.mjs). Must export:\n" +
+          "  export const skill = {\n" +
+          "    name: string,\n" +
+          "    description: string,\n" +
+          "    dangerous: boolean,\n" +
+          "    parameters: { type: 'object', properties: {...}, required: [...] },\n" +
+          "    async execute(params) { ... return string; }\n" +
+          "  };\n" +
+          "Use Node.js built-ins (fs, path, child_process) or packages already installed in the project. " +
+          "The code runs in the same Node.js process as SafeClaw.",
+      },
+    },
+    required: [
+      "skill_name",
+      "skill_description",
+      "reason",
+      "dangerous",
+      "parameters_schema",
+      "implementation_code",
+    ],
+  },
+};
+
 /**
  * Convert enabled SafeClaw tools into LLM tool_use schemas.
  * Only enabled tools are visible to the LLM — disabled tools don't exist.
@@ -9,6 +74,16 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
   const schemas: LLMToolSchema[] = [];
 
   for (const tool of enabledTools) {
+    // Dynamic skills: use stored parameters schema
+    if (tool.isDynamic && tool.skillName) {
+      schemas.push({
+        name: `skill__${tool.skillName}`,
+        description: tool.description,
+        parameters: tool.skillParameters ?? { type: "object", properties: {} },
+      });
+      continue;
+    }
+
     // MCP tools emit their schema directly from the server's inputSchema
     if (tool.isMcp) {
       schemas.push({
@@ -71,20 +146,6 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
         );
         break;
 
-      case "shell":
-        schemas.push({
-          name: "exec_shell",
-          description: "Execute a shell command. This action requires owner confirmation.",
-          parameters: {
-            type: "object",
-            properties: {
-              command: { type: "string", description: "Shell command to execute" },
-            },
-            required: ["command"],
-          },
-        });
-        break;
-
       case "browser":
         schemas.push({
           name: "browse_web",
@@ -99,50 +160,6 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
         });
         break;
 
-      case "code_exec":
-        schemas.push({
-          name: "exec_code",
-          description: "Execute a code snippet. This action requires owner confirmation.",
-          parameters: {
-            type: "object",
-            properties: {
-              code: { type: "string", description: "Code to execute" },
-              language: { type: "string", description: "Programming language (default: javascript)" },
-            },
-            required: ["code"],
-          },
-        });
-        break;
-
-      case "network":
-        schemas.push({
-          name: "network_request",
-          description: "Make an HTTP request. This action requires owner confirmation.",
-          parameters: {
-            type: "object",
-            properties: {
-              url: { type: "string", description: "URL to request" },
-              method: { type: "string", description: "HTTP method (default: GET)" },
-            },
-            required: ["url"],
-          },
-        });
-        break;
-
-      case "messaging":
-        schemas.push({
-          name: "send_message",
-          description: "Send a message to a contact. This action requires owner confirmation.",
-          parameters: {
-            type: "object",
-            properties: {
-              contact: { type: "string", description: "Contact name or ID" },
-              message: { type: "string", description: "Message to send" },
-            },
-            required: ["contact", "message"],
-          },
-        });
-        break;
     }
   }
 
@@ -156,6 +173,11 @@ export function resolveToolCall(toolCallName: string): {
   toolName: string;
   action: string;
 } | null {
+  // Dynamic skills: name format is "skill__<name>"
+  if (toolCallName.startsWith("skill__")) {
+    return { toolName: toolCallName, action: "skill_call" };
+  }
+
   // MCP tools: name format is "mcp__<server>__<tool>"
   if (toolCallName.startsWith("mcp__")) {
     return { toolName: toolCallName, action: "mcp_call" };
@@ -167,11 +189,7 @@ export function resolveToolCall(toolCallName: string): {
     list_dir: { toolName: "filesystem", action: "list_dir" },
     write_file: { toolName: "filesystem", action: "write_file" },
     delete_file: { toolName: "filesystem", action: "delete_file" },
-    exec_shell: { toolName: "shell", action: "exec_shell" },
     browse_web: { toolName: "browser", action: "browse_web" },
-    exec_code: { toolName: "code_exec", action: "exec_code" },
-    network_request: { toolName: "network", action: "network_request" },
-    send_message: { toolName: "messaging", action: "send_message" },
   };
 
   return mapping[toolCallName] ?? null;
@@ -184,6 +202,14 @@ export function extractToolDetails(
   toolCallName: string,
   input: Record<string, unknown>
 ): { target?: string; content?: string; description: string } {
+  // Dynamic skills: serialize the full input as JSON
+  if (toolCallName.startsWith("skill__")) {
+    return {
+      target: JSON.stringify(input),
+      description: `${toolCallName}: ${JSON.stringify(input).slice(0, 120)}`,
+    };
+  }
+
   // MCP tools: serialize the full input as JSON into the target field
   if (toolCallName.startsWith("mcp__")) {
     return {
@@ -210,31 +236,10 @@ export function extractToolDetails(
         content: input.content as string,
         description: `write_file: ${input.path} (${((input.content as string) || "").length} chars)`,
       };
-    case "exec_shell":
-      return {
-        target: input.command as string,
-        description: `exec_shell: ${input.command}`,
-      };
     case "browse_web":
       return {
         target: input.query as string,
         description: `browse_web: ${input.query}`,
-      };
-    case "exec_code":
-      return {
-        target: input.code as string,
-        description: `exec_code: ${((input.code as string) || "").slice(0, 80)}`,
-      };
-    case "network_request":
-      return {
-        target: input.url as string,
-        description: `network_request: ${input.method || "GET"} ${input.url}`,
-      };
-    case "send_message":
-      return {
-        target: `${input.contact}|${input.message}`,
-        content: input.message as string,
-        description: `send_message: to ${input.contact}`,
       };
     default:
       return { description: `${toolCallName}: ${JSON.stringify(input)}` };

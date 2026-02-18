@@ -1,11 +1,7 @@
 import type { Gateway } from "../core/gateway.js";
 import type { ActionType } from "../core/types.js";
 import { fsReadFile, fsListDir, fsWriteFile, fsDeleteFile } from "./filesystem.js";
-import { simulateBrowser } from "./browser.js";
-import { simulateShell } from "./shell.js";
-import { simulateSendMessage } from "./messaging.js";
-import { simulateCodeExec } from "./code_exec.js";
-import { simulateNetworkRequest } from "./network.js";
+import { fetchUrl } from "./browser.js";
 import { parseMcpLLMName } from "../mcp/manager.js";
 
 /**
@@ -38,20 +34,8 @@ export async function executeToolAction(
         }
       }
 
-      // ─── Still simulated ───────────────────────────────────
       case "browser":
-        return simulateBrowser(details.target || details.description).result;
-      case "shell":
-        return simulateShell(details.target || details.description).result;
-      case "messaging": {
-        const msgTarget = details.target || "";
-        const [contact, ...msgParts] = msgTarget.split("|");
-        return simulateSendMessage(contact || "unknown", msgParts.join("|") || details.content || "").result;
-      }
-      case "code_exec":
-        return simulateCodeExec(details.target || details.description).result;
-      case "network":
-        return simulateNetworkRequest(details.target || details.description).result;
+        return (await fetchUrl(details.target || details.description)).result;
 
       default: {
         // ─── MCP tool call ─────────────────────────────────
@@ -67,6 +51,38 @@ export async function executeToolAction(
             args = {};
           }
           return await gw.mcpManager.callTool(parsed.serverName, parsed.toolName, args);
+        }
+
+        // ─── Dynamic skill call ────────────────────────────
+        if (action === "skill_call") {
+          const skillName = toolName.replace(/^skill__/, "");
+          const skill = gw.skillsManager.get(skillName);
+          if (!skill) return `Skill "${skillName}" not found.`;
+
+          let params: Record<string, unknown> = {};
+          try {
+            params = details.target ? (JSON.parse(details.target) as Record<string, unknown>) : {};
+          } catch {
+            params = {};
+          }
+          return await skill.execute(params);
+        }
+
+        // ─── Skill install (after /confirm on a proposal) ──
+        if (action === "skill_install") {
+          const skillName = details.target;
+          const code = details.content;
+          if (!skillName || !code) return "Skill install failed: missing name or code.";
+
+          const skill = await gw.skillsManager.install(skillName, code);
+          // Auto-enable: user already approved the install which is the dangerous step
+          gw.tools.registerDynamic(skill, true);
+
+          await gw.audit.log("skill_installed", { skillName: skill.name });
+          return (
+            `Skill "${skill.name}" has been installed and is now active.\n` +
+            `You can use it as tool "skill__${skill.name}" to complete the task.`
+          );
         }
 
         return `[Simulated] ${toolName}/${action}: ${details.description}`;

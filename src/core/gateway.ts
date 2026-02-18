@@ -7,6 +7,7 @@ import type { ConversationSession } from "../agent/session.js";
 import { createSession } from "../agent/session.js";
 import { McpManager } from "../mcp/manager.js";
 import { readMcpServersConfig } from "../mcp/config.js";
+import { SkillsManager } from "../skills/manager.js";
 
 export class Gateway {
   state: GatewayState = "dormant";
@@ -18,6 +19,7 @@ export class Gateway {
   providerStore: ProviderStore;
   conversation: ConversationSession | null = null;
   mcpManager: McpManager;
+  skillsManager: SkillsManager;
 
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private onAutoSleep?: () => void;
@@ -29,11 +31,18 @@ export class Gateway {
     this.audit = new AuditLogger(config.storageDir);
     this.providerStore = new ProviderStore(config.storageDir);
     this.mcpManager = new McpManager();
+    this.skillsManager = new SkillsManager(config.storageDir);
     this.onAutoSleep = onAutoSleep;
   }
 
   async init(): Promise<void> {
     await this.providerStore.load();
+    await this.skillsManager.init();
+
+    // Register any persisted dynamic skills in the tool registry (disabled by default)
+    for (const skill of this.skillsManager.getAll()) {
+      this.tools.registerDynamic(skill);
+    }
   }
 
   // ─── State Transitions ────────────────────────────────────

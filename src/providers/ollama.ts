@@ -69,6 +69,34 @@ export class OllamaProvider implements LLMProvider {
 
     if (!res.ok) {
       const errText = await res.text();
+      // Some models (e.g. deepseek-r1) don't support tool calling.
+      // Retry without tools so we still get a plain text response.
+      if (res.status === 400 && errText.includes("does not support tools") && body.tools) {
+        delete body.tools;
+        let retryRes: Response;
+        try {
+          retryRes = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+        } catch {
+          throw new Error(`Cannot reach Ollama at ${this.baseUrl}. Is it running? (ollama serve)`);
+        }
+        if (!retryRes.ok) {
+          const retryErr = await retryRes.text();
+          throw new Error(`Ollama API error (${retryRes.status}): ${retryErr}`);
+        }
+        const retryData = (await retryRes.json()) as {
+          choices: Array<{ message: { content: string | null } }>;
+        };
+        const baseText = retryData.choices[0]?.message?.content ?? null;
+        const warning =
+          `⚠️ Note: The model "${model}" does not support tool use. ` +
+          `Tools are disabled for this response. ` +
+          `Switch to a tool-capable model (e.g. /model ollama/llama3.1 or /model ollama/qwen2.5) to use browser, filesystem, and other tools.\n\n`;
+        return { text: warning + (baseText ?? ""), toolCalls: [] };
+      }
       throw new Error(`Ollama API error (${res.status}): ${errText}`);
     }
 

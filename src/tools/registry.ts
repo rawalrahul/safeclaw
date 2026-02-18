@@ -1,13 +1,10 @@
 import type { ToolDefinition, ToolStatus } from "../core/types.js";
 import { BUILTIN_TOOL_NAMES } from "../core/types.js";
+import type { DynamicSkill } from "../skills/dynamic.js";
 
 const BUILTIN_TOOL_DESCRIPTIONS: Record<string, { description: string; dangerous: boolean }> = {
   browser: { description: "Web browsing and search", dangerous: true },
   filesystem: { description: "Read, write, and delete files", dangerous: true },
-  shell: { description: "Execute shell commands", dangerous: true },
-  code_exec: { description: "Run code snippets", dangerous: true },
-  network: { description: "HTTP requests and API calls", dangerous: true },
-  messaging: { description: "Send messages to contacts", dangerous: true },
 };
 
 export class ToolRegistry {
@@ -120,12 +117,40 @@ export class ToolRegistry {
     return count;
   }
 
+  // ─── Dynamic skill methods ────────────────────────────────
+
+  /** Register a dynamic skill as a tool definition. Disabled by default. */
+  registerDynamic(skill: DynamicSkill, enabled = false): void {
+    const toolName = `skill__${skill.name}`;
+    this.tools.set(toolName, {
+      name: toolName,
+      description: skill.description,
+      dangerous: skill.dangerous,
+      status: enabled ? "enabled" : "disabled",
+      isDynamic: true,
+      skillName: skill.name,
+      skillParameters: skill.parameters,
+    });
+  }
+
+  /** Remove all dynamic skill tools from the registry. */
+  clearDynamic(): void {
+    for (const [key, tool] of this.tools) {
+      if (tool.isDynamic) {
+        this.tools.delete(key);
+      }
+    }
+  }
+
   formatStatus(): string {
     const builtins: ToolDefinition[] = [];
     const mcpByServer: Map<string, ToolDefinition[]> = new Map();
+    const dynamics: ToolDefinition[] = [];
 
     for (const tool of this.tools.values()) {
-      if (tool.isMcp && tool.mcpServer) {
+      if (tool.isDynamic) {
+        dynamics.push(tool);
+      } else if (tool.isMcp && tool.mcpServer) {
         const group = mcpByServer.get(tool.mcpServer) ?? [];
         group.push(tool);
         mcpByServer.set(tool.mcpServer, group);
@@ -150,6 +175,16 @@ export class ToolRegistry {
           const icon = tool.status === "enabled" ? "ON " : "OFF";
           lines.push(`    ${icon}  ${tool.name} — ${tool.description}`);
         }
+      }
+    }
+
+    if (dynamics.length > 0) {
+      lines.push("");
+      lines.push("Dynamic Skills (installed by agent):");
+      for (const tool of dynamics) {
+        const icon = tool.status === "enabled" ? "ON " : "OFF";
+        const danger = tool.dangerous ? " ⚠️" : "";
+        lines.push(`  ${icon}  ${tool.name} — ${tool.description}${danger}`);
       }
     }
 

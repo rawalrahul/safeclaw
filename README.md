@@ -375,6 +375,106 @@ Bot:  Approved. [LLM follow-up: "Done! I've written hn_fetch.py ..."]
 
 ---
 
+## Self-Extending Skills
+
+SafeClaw can detect when it lacks a capability and propose new skills at runtime — without a restart.
+
+### How it works
+
+When you give the agent a task it can't complete with its current tools (e.g. "create a PDF report"), it automatically:
+
+1. Recognises the capability gap
+2. Generates a working JavaScript implementation
+3. Sends you a proposal with a full code preview for review
+4. Waits for your `/confirm` before installing anything
+
+On approval, the skill is written to `~/.safeclaw/skills/<name>.mjs`, dynamically imported, and immediately available. It persists across restarts.
+
+### Example session
+
+```
+You:  create a PDF summary of my workspace notes
+
+Bot:  🔧 Skill Proposal: pdf_create
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      Description: Create PDF documents from text content
+      Needed for: Generating a PDF summary of workspace notes
+
+      ⚠️  This skill performs potentially dangerous operations (file writes, network calls, etc.).
+
+      Proposed code:
+      ```
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      export const skill = {
+        name: "pdf_create",
+        description: "Create PDF documents from text content",
+        dangerous: true,
+        parameters: {
+          type: "object",
+          properties: {
+            filename: { type: "string" },
+            content: { type: "string" }
+          },
+          required: ["filename", "content"]
+        },
+        async execute(params) {
+          // Simple text file fallback if pdfkit not available
+          const path = join(process.env.WORKSPACE_DIR || ".", params.filename);
+          writeFileSync(path, params.content, "utf8");
+          return `Saved to ${params.filename}`;
+        }
+      };
+      ```
+
+      ⚠️  This code will run inside the SafeClaw process with full Node.js access.
+      Review it carefully before approving.
+
+      Expires in: 300s
+
+      /confirm a1b2c3d4  →  install skill
+      /deny a1b2c3d4     →  reject proposal
+
+You:  /confirm a1b2c3d4
+
+Bot:  Approved.
+      Skill "pdf_create" has been installed and is now active.
+      [Agent continues and creates the PDF...]
+```
+
+### Skill storage
+
+Skills live in `~/.safeclaw/skills/` as ES module JavaScript files (`.mjs`). They load on every `/wake`. You can inspect or delete them directly:
+
+```bash
+ls ~/.safeclaw/skills/
+cat ~/.safeclaw/skills/pdf_create.mjs
+rm ~/.safeclaw/skills/pdf_create.mjs   # remove a skill permanently
+```
+
+### Skill tool names
+
+Installed skills appear in `/tools` under **Dynamic Skills** and are referenced with a `skill__` prefix:
+
+```
+/tools
+→  Dynamic Skills (installed by agent):
+     OFF  skill__pdf_create — Create PDF documents from text content ⚠️
+
+/enable skill__pdf_create
+/disable skill__pdf_create
+```
+
+### Security
+
+- **Every skill install requires `/confirm`** — same as any other dangerous action
+- **Full code is shown before you approve** — never a black box
+- **Skills run with full Node.js access** — treat them like running a shell script you wrote yourself
+- **Skills are disabled by default after install** — the agent auto-enables the freshly installed skill for the current session, but after a `/sleep` + `/wake` cycle you control whether it's enabled via `/enable skill__<name>`
+
+---
+
 ## MCP Tool Auto-Discovery
 
 SafeClaw reads the MCP server configuration from your Claude Code settings and automatically discovers all tools from them on every `/wake`.
@@ -527,6 +627,9 @@ safeclaw/
 │   │   ├── messaging.ts          # Stub
 │   │   ├── code_exec.ts          # Stub
 │   │   └── network.ts            # Stub
+│   ├── skills/
+│   │   ├── dynamic.ts            # DynamicSkill interface + .mjs file loader
+│   │   └── manager.ts            # SkillsManager: install, load, persist skills
 │   ├── mcp/
 │   │   ├── config.ts             # Reads ~/.claude/settings.json mcpServers block
 │   │   ├── manager.ts            # Connect/discover/call/disconnect MCP servers
@@ -563,6 +666,7 @@ safeclaw/
 - Persistent API key storage in `~/.safeclaw/auth.json`
 - **Real filesystem** — read, write, list, delete (sandboxed to `WORKSPACE_DIR`)
 - **MCP auto-discovery** — stdio servers from `~/.claude/settings.json`
+- **Self-extending skills** — agent proposes new capabilities, owner approves, skills are dynamically installed and loaded without restart
 - Conversation sessions with history trimming
 
 ### Simulated (stub responses)
@@ -600,6 +704,7 @@ These stubs demonstrate the full permission flow safely. Replacing them with rea
 - [x] LLM agent — Anthropic Claude, OpenAI GPT, Google Gemini, and Ollama (local) — with tool calling
 - [x] Live model listing fetched from provider APIs (+ local listing for Ollama)
 - [x] MCP tool auto-discovery from `~/.claude/settings.json`
+- [x] Self-extending skills — agent proposes and installs new capabilities at runtime
 - [ ] Real browser tool (Playwright / Puppeteer)
 - [ ] Real shell execution (with timeout and output limits)
 - [ ] HTTP/SSE MCP server support
