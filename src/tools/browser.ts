@@ -5,11 +5,56 @@ import type { ActionType } from "../core/types.js";
 const MAX_CONTENT_LENGTH = 12_000;
 const FETCH_TIMEOUT_MS = 15_000;
 
+// ── Playwright singleton ──────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _browser: any = null;
+let _playwrightUnavailable = false;
+
+async function getBrowser(): Promise<unknown | null> {
+  if (_playwrightUnavailable) return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (_browser && (_browser as any).isConnected?.()) return _browser;
+
+  try {
+    const pw = await import("playwright");
+    _browser = await pw.chromium.launch({ headless: true });
+    console.log("[browser] Playwright Chromium launched.");
+    return _browser;
+  } catch (err) {
+    _playwrightUnavailable = true;
+    console.warn(
+      "[browser] Playwright unavailable — falling back to fetch+Readability.",
+      "\n  To enable JS rendering run: npx playwright install chromium",
+      "\n  Reason:", (err as Error).message.split("\n")[0]
+    );
+    return null;
+  }
+}
+
+/**
+ * Close the shared Playwright browser instance.
+ * Called on /sleep, /kill, and auto-sleep so the browser process doesn't linger.
+ */
+export async function closeBrowser(): Promise<void> {
+  if (_browser) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (_browser as any).close();
+    } catch {
+      // already closed
+    }
+    _browser = null;
+  }
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
 /**
  * Fetch a URL and return clean readable text.
- * Uses @mozilla/readability (same as Firefox Reader Mode) for articles.
- * Falls back to regex HTML stripping for non-article pages.
- * Plain search queries are routed through DuckDuckGo HTML (no API key needed).
+ * Tries Playwright (headless Chromium, full JS) first.
+ * Falls back to fetch + @mozilla/readability if Playwright is unavailable.
+ * Plain search queries are routed through DuckDuckGo.
  */
 export async function fetchUrl(query: string): Promise<{
   action: ActionType;
@@ -20,6 +65,84 @@ export async function fetchUrl(query: string): Promise<{
     ? query
     : `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 
+  const browser = await getBrowser();
+  if (browser) {
+    const result = await fetchWithPlaywright(browser, url);
+    if (result) return result;
+  }
+
+  return fetchWithFetch(url);
+}
+
+// ── Playwright path ───────────────────────────────────────────────────────────
+
+async function fetchWithPlaywright(
+  browser: unknown,
+  url: string
+): Promise<{ action: ActionType; description: string; result: string } | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const b = browser as any;
+  let context: unknown = null;
+  let page: unknown = null;
+
+  try {
+    context = await b.newContext({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      javaScriptEnabled: true,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    page = await (context as any).newPage();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const p = page as any;
+
+    await p.goto(url, { waitUntil: "domcontentloaded", timeout: FETCH_TIMEOUT_MS });
+
+    // Give JS frameworks up to 1.5 s to render
+    await p.waitForTimeout(1500);
+
+    const finalUrl: string = p.url();
+    const title: string = await p.title();
+
+    // Extract visible text, stripping noise elements
+    const content: string = await p.evaluate(() => {
+      // Remove script/style/nav/footer noise
+      (["script", "style", "noscript", "nav", "footer", "header"] as string[]).forEach((tag) => {
+        document.querySelectorAll(tag).forEach((el) => el.remove());
+      });
+      return (document.body?.innerText ?? "").replace(/\n{3,}/g, "\n\n").trim();
+    });
+
+    if (!content) return null;
+
+    const truncated =
+      content.length > MAX_CONTENT_LENGTH
+        ? content.slice(0, MAX_CONTENT_LENGTH) + `\n\n[... truncated at ${MAX_CONTENT_LENGTH} chars]`
+        : content;
+
+    const result = title ? `URL: ${finalUrl}\n# ${title}\n\n${truncated}` : `URL: ${finalUrl}\n\n${truncated}`;
+
+    return { action: "browse_web", description: `Fetch ${finalUrl}`, result };
+  } catch (err) {
+    console.warn("[browser] Playwright fetch failed:", (err as Error).message.split("\n")[0]);
+    return null;
+  } finally {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { await (page as any)?.close(); } catch { /* ignore */ }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { await (context as any)?.close(); } catch { /* ignore */ }
+  }
+}
+
+// ── Fetch fallback ────────────────────────────────────────────────────────────
+
+async function fetchWithFetch(url: string): Promise<{
+  action: ActionType;
+  description: string;
+  result: string;
+}> {
   let rawHtml: string;
   let finalUrl = url;
 
@@ -67,19 +190,10 @@ export async function fetchUrl(query: string): Promise<{
   };
 }
 
-/**
- * Extract readable text from raw HTML.
- * Tries Readability first (Firefox Reader Mode algorithm) — great for articles/news.
- * Falls back to regex stripping for pages Readability can't handle (search results, SPAs, etc).
- */
 function extractText(html: string, url: string): string {
-  // Try Readability for article pages
   try {
     const { document } = parseHTML(html);
-    // Readability needs the document URL to resolve relative links
     if (document.baseURI !== url) {
-      // linkedom doesn't set baseURI from URL arg, but Readability uses it
-      // to handle relative links — set it via a <base> element
       const base = document.createElement("base");
       base.setAttribute("href", url);
       document.head?.prepend(base);
@@ -97,10 +211,9 @@ function extractText(html: string, url: string): string {
       return parts.join("\n");
     }
   } catch {
-    // Readability failed — fall through to regex stripping
+    // fall through to regex stripping
   }
 
-  // Fallback: strip HTML tags
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")

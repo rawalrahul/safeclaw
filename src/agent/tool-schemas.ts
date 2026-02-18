@@ -230,6 +230,56 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
         );
         break;
 
+      case "memory":
+        schemas.push(
+          {
+            name: "memory_write",
+            description:
+              "Store a fact in persistent memory. Use a short descriptive key (e.g. 'user_name', 'preferred_language', 'project_path'). " +
+              "Memory persists across sessions and is automatically included in your context.",
+            parameters: {
+              type: "object",
+              properties: {
+                key: { type: "string", description: "Short snake_case identifier for the fact" },
+                value: { type: "string", description: "The value to remember" },
+              },
+              required: ["key", "value"],
+            },
+          },
+          {
+            name: "memory_read",
+            description: "Read a specific stored memory by its key.",
+            parameters: {
+              type: "object",
+              properties: {
+                key: { type: "string", description: "The memory key to look up" },
+              },
+              required: ["key"],
+            },
+          },
+          {
+            name: "memory_list",
+            description: "List all stored memories with their values.",
+            parameters: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
+          {
+            name: "memory_delete",
+            description: "Delete a stored memory by key. Requires owner confirmation.",
+            parameters: {
+              type: "object",
+              properties: {
+                key: { type: "string", description: "The memory key to delete" },
+              },
+              required: ["key"],
+            },
+          }
+        );
+        break;
+
       case "patch":
         schemas.push({
           name: "apply_patch",
@@ -277,6 +327,10 @@ export function resolveToolCall(toolCallName: string): {
     write_file: { toolName: "filesystem", action: "write_file" },
     delete_file: { toolName: "filesystem", action: "delete_file" },
     browse_web: { toolName: "browser", action: "browse_web" },
+    memory_write: { toolName: "memory", action: "memory_write" },
+    memory_read: { toolName: "memory", action: "memory_read" },
+    memory_list: { toolName: "memory", action: "memory_list" },
+    memory_delete: { toolName: "memory", action: "memory_delete" },
     exec_shell: { toolName: "shell", action: "exec_shell" },
     exec_shell_bg: { toolName: "shell", action: "exec_shell_bg" },
     process_poll: { toolName: "shell", action: "process_poll" },
@@ -364,6 +418,24 @@ export function extractToolDetails(
     case "process_list":
       return {
         description: "process_list",
+      };
+    case "memory_write":
+      return {
+        target: input.key as string,
+        content: input.value as string,
+        description: `memory_write: ${input.key} = ${String(input.value).slice(0, 80)}`,
+      };
+    case "memory_read":
+      return {
+        target: input.key as string,
+        description: `memory_read: ${input.key}`,
+      };
+    case "memory_list":
+      return { description: "memory_list" };
+    case "memory_delete":
+      return {
+        target: input.key as string,
+        description: `memory_delete: ${input.key}`,
       };
     case "apply_patch":
       return {

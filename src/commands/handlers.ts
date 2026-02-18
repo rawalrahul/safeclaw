@@ -457,8 +457,9 @@ Info:
   /skills — List prompt skills from ~/.safeclaw/prompt-skills/
   /help — Show this help
 
-Builtin tools: browser, filesystem, shell, patch
+Builtin tools: browser, filesystem, shell, patch, memory
 Shell tool includes background process management (exec_shell_bg, process_poll, process_write, process_kill).
+Memory tool persists facts across sessions — auto-injected into every system prompt.
 MCP tools: auto-discovered on /wake from ~/.claude/settings.json
 
 Customisation:

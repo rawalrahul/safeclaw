@@ -4,6 +4,7 @@ import { fsReadFile, fsListDir, fsWriteFile, fsDeleteFile } from "./filesystem.j
 import { fetchUrl } from "./browser.js";
 import { execShell } from "./shell.js";
 import { applyPatch } from "./patch.js";
+import { memoryRead, memoryWrite, memoryList, memoryDelete } from "./memory.js";
 import { parseMcpLLMName } from "../mcp/manager.js";
 
 /**
@@ -57,6 +58,22 @@ export async function executeToolAction(
             return gw.processRegistry.list();
           default:
             return `Unknown shell action: ${action}`;
+        }
+      }
+
+      case "memory": {
+        const storageDir = gw.config.storageDir;
+        switch (action) {
+          case "memory_read":
+            return await memoryRead(storageDir, details.target || "");
+          case "memory_write":
+            return await memoryWrite(storageDir, details.target || "", details.content || "");
+          case "memory_list":
+            return await memoryList(storageDir);
+          case "memory_delete":
+            return await memoryDelete(storageDir, details.target || "");
+          default:
+            return `Unknown memory action: ${action}`;
         }
       }
 

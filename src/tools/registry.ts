@@ -7,6 +7,7 @@ const BUILTIN_TOOL_DESCRIPTIONS: Record<string, { description: string; dangerous
   filesystem: { description: "Read, write, and delete files", dangerous: true },
   shell: { description: "Execute shell commands", dangerous: true },
   patch: { description: "Apply code patches (add/update/delete/move files)", dangerous: true },
+  memory: { description: "Remember and recall facts across sessions", dangerous: true },
 };
 
 export class ToolRegistry {

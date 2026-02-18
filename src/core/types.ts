@@ -7,6 +7,7 @@ export const BUILTIN_TOOL_NAMES = [
   "filesystem",
   "shell",
   "patch",
+  "memory",
 ] as const;
 
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
@@ -65,6 +66,10 @@ export type ActionType =
   | "process_write"
   | "process_kill"
   | "process_list"
+  | "memory_read"
+  | "memory_write"
+  | "memory_list"
+  | "memory_delete"
   | "exec_code"
   | "send_message"
   | "network_request"
@@ -78,6 +83,9 @@ export const SAFE_ACTIONS: ActionType[] = [
   "browse_web",
   "process_poll",
   "process_list",
+  "memory_read",
+  "memory_write",
+  "memory_list",
 ];
 
 export interface PermissionRequest {

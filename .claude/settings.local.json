@@ -15,7 +15,8 @@
       "Bash(where:*)",
       "Bash(python3:*)",
       "Bash(powershell -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\91982\\\\Downloads\\\\safeclaw\\\\extract.ps1\")",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(cmd /c \"npm install playwright 2>&1\")"
     ]
   }
 }

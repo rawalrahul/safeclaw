@@ -10,6 +10,7 @@ import {
 } from "./tool-schemas.js";
 import { addUserMessage, addAssistantMessage, addToolResult, trimHistory, estimateTokens } from "./session.js";
 import { executeToolAction } from "../tools/executor.js";
+import { getMemoryContext } from "../tools/memory.js";
 import type { LLMMessage } from "../providers/types.js";
 
 const BASE_SYSTEM_PROMPT = `You are SafeClaw, a secure personal AI assistant running as a Telegram bot. You help the owner with tasks using the tools available to you.
@@ -34,10 +35,16 @@ const COMPACTION_BATCH_SIZE = 20;
 
 /**
  * Build the system prompt for this session.
- * Appends the custom soul file (if loaded) and active prompt skills.
+ * Injects persistent memories, active prompt skills, and the custom soul file.
  */
-function buildSystemPrompt(gw: Gateway): string {
+async function buildSystemPrompt(gw: Gateway): Promise<string> {
   const parts = [BASE_SYSTEM_PROMPT];
+
+  // Inject persistent memories so the LLM always has context
+  const memCtx = await getMemoryContext(gw.config.storageDir);
+  if (memCtx) {
+    parts.push(`\n\n${memCtx}`);
+  }
 
   // Append active prompt skills (e.g. "how to use gh, curl wttr.in, tmux…")
   const activeSkills = gw.promptSkills.filter(s => s.active);
@@ -139,7 +146,7 @@ export async function runAgent(gw: Gateway, userText: string): Promise<string> {
   addUserMessage(gw.conversation, userText);
   trimHistory(gw.conversation);
 
-  const systemPrompt = buildSystemPrompt(gw);
+  const systemPrompt = await buildSystemPrompt(gw);
 
   // Auto-compact if history is getting large
   const compactionNote = await maybeCompact(gw, systemPrompt);
@@ -307,7 +314,7 @@ export async function continueAfterToolResult(
   const { provider, model } = resolved;
   const enabledTools = gw.tools.getEnabled();
   const toolSchemas = [REQUEST_CAPABILITY_SCHEMA, ...buildToolSchemas(enabledTools)];
-  const systemPrompt = buildSystemPrompt(gw);
+  const systemPrompt = await buildSystemPrompt(gw);
 
   const messages: LLMMessage[] = [
     { role: "system" as const, content: systemPrompt },

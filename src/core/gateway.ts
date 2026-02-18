@@ -11,6 +11,7 @@ import { SkillsManager } from "../skills/manager.js";
 import { loadPromptSkills } from "../skills/prompt-skills.js";
 import type { PromptSkill } from "../skills/prompt-skills.js";
 import { ProcessRegistry } from "../tools/process-registry.js";
+import { closeBrowser } from "../tools/browser.js";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -139,7 +140,7 @@ export class Gateway {
     this.tools.clearMcp();
     this.approvals.cleanupExpired();
     this.processRegistry.dispose();
-    await this.mcpManager.disconnectAll();
+    await Promise.all([this.mcpManager.disconnectAll(), closeBrowser()]);
 
     await this.audit.log("gateway_sleep");
     return "Gateway dormant. Goodnight.";
@@ -155,7 +156,7 @@ export class Gateway {
     this.tools.disableAll();
     this.tools.clearMcp();
     this.processRegistry.dispose();
-    await this.mcpManager.disconnectAll();
+    await Promise.all([this.mcpManager.disconnectAll(), closeBrowser()]);
 
     await this.audit.log("gateway_kill");
     return "Emergency shutdown. Gateway stopped.";
@@ -170,7 +171,7 @@ export class Gateway {
     this.tools.disableAll();
     this.tools.clearMcp();
     this.processRegistry.dispose();
-    await this.mcpManager.disconnectAll();
+    await Promise.all([this.mcpManager.disconnectAll(), closeBrowser()]);
 
     await this.audit.log("gateway_auto_sleep", {
       reason: "inactivity timeout",
