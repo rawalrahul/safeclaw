@@ -50,6 +50,8 @@ export interface LLMMessage {
   content: string;
   toolCallId?: string;
   toolName?: string;
+  /** Tool calls made by the assistant in this turn — required for proper history replay. */
+  toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>;
 }
 
 export interface LLMToolSchema {

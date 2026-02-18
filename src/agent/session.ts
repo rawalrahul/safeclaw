@@ -24,8 +24,16 @@ export function addUserMessage(session: ConversationSession, text: string): void
   session.messages.push({ role: "user", content: text });
 }
 
-export function addAssistantMessage(session: ConversationSession, text: string): void {
-  session.messages.push({ role: "assistant", content: text });
+export function addAssistantMessage(
+  session: ConversationSession,
+  text: string | null,
+  toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>
+): void {
+  session.messages.push({
+    role: "assistant",
+    content: text ?? "",
+    toolCalls: toolCalls?.length ? toolCalls : undefined,
+  });
 }
 
 export function addToolResult(

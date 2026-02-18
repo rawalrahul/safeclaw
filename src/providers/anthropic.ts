@@ -73,7 +73,17 @@ export class AnthropicProvider implements LLMProvider {
       if (msg.role === "user") {
         result.push({ role: "user", content: msg.content });
       } else if (msg.role === "assistant") {
-        result.push({ role: "assistant", content: msg.content });
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          // Must include tool_use blocks so following tool_result messages are valid
+          const blocks: AnthropicContent[] = [];
+          if (msg.content) blocks.push({ type: "text", text: msg.content });
+          for (const tc of msg.toolCalls) {
+            blocks.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.input });
+          }
+          result.push({ role: "assistant", content: blocks });
+        } else {
+          result.push({ role: "assistant", content: msg.content });
+        }
       } else if (msg.role === "tool_result") {
         // Tool results go as user messages with tool_result content blocks
         result.push({

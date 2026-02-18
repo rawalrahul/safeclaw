@@ -124,7 +124,19 @@ export class OllamaProvider implements LLMProvider {
       } else if (msg.role === "user") {
         result.push({ role: "user", content: msg.content });
       } else if (msg.role === "assistant") {
-        result.push({ role: "assistant", content: msg.content });
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          result.push({
+            role: "assistant",
+            content: msg.content || null,
+            tool_calls: msg.toolCalls.map((tc) => ({
+              id: tc.id,
+              type: "function" as const,
+              function: { name: tc.name, arguments: JSON.stringify(tc.input) },
+            })),
+          });
+        } else {
+          result.push({ role: "assistant", content: msg.content });
+        }
       } else if (msg.role === "tool_result") {
         result.push({
           role: "tool",

@@ -196,10 +196,11 @@ async function handleToolCalls(
   const parts: string[] = [];
   if (response.text) parts.push(response.text);
 
-  // Track if we got a text response from assistant before tool calls
-  if (response.text) {
-    addAssistantMessage(gw.conversation, response.text);
-  }
+  // Store the full assistant response (text + tool_use blocks) BEFORE any tool results.
+  // This keeps conversation history valid for all providers — Anthropic requires a
+  // tool_use block to precede every tool_result; OpenAI/Ollama need tool_calls on the
+  // assistant turn; Gemini needs a functionCall part before the functionResponse.
+  addAssistantMessage(gw.conversation, response.text, response.toolCalls);
 
   for (const tc of response.toolCalls) {
     // ── Meta-tool: request_capability ────────────────────────

@@ -101,45 +101,36 @@ export class GeminiProvider implements LLMProvider {
           contents.push({ role: "user", parts: [{ text: msg.content }] });
         }
       } else if (msg.role === "assistant") {
-        const last = contents[contents.length - 1];
-        if (last?.role === "model") {
-          last.parts.push({ text: msg.content });
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          // Emit a model turn with text (optional) + functionCall parts
+          const parts: GeminiPart[] = [];
+          if (msg.content) parts.push({ text: msg.content });
+          for (const tc of msg.toolCalls) {
+            parts.push({ functionCall: { name: tc.name, args: tc.input } });
+          }
+          contents.push({ role: "model", parts });
         } else {
-          contents.push({ role: "model", parts: [{ text: msg.content }] });
+          const last = contents[contents.length - 1];
+          if (last?.role === "model") {
+            last.parts.push({ text: msg.content });
+          } else {
+            contents.push({ role: "model", parts: [{ text: msg.content }] });
+          }
         }
       } else if (msg.role === "tool_result") {
         const fnName = msg.toolName ?? "tool";
 
-        // Ensure a model turn with a functionCall precedes the functionResponse
+        // The preceding model turn already has the functionCall part (stored on the
+        // assistant message). Just emit the functionResponse as a user turn.
         const last = contents[contents.length - 1];
-        if (last?.role === "model") {
-          // Append the functionCall to the existing model turn
-          last.parts.push({ functionCall: { name: fnName, args: {} } });
-        } else {
-          // Inject a new model turn
-          contents.push({
-            role: "model",
-            parts: [{ functionCall: { name: fnName, args: {} } }],
-          });
-        }
-
-        // Add the functionResponse as a user turn
-        const prevUser = contents[contents.length - 1];
-        if (prevUser?.role === "user") {
-          prevUser.parts.push({
+        if (last?.role === "user") {
+          last.parts.push({
             functionResponse: { name: fnName, response: { output: msg.content } },
           });
         } else {
           contents.push({
             role: "user",
-            parts: [
-              {
-                functionResponse: {
-                  name: fnName,
-                  response: { output: msg.content },
-                },
-              },
-            ],
+            parts: [{ functionResponse: { name: fnName, response: { output: msg.content } } }],
           });
         }
       }
