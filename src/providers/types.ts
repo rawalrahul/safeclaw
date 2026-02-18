@@ -46,7 +46,7 @@ export interface LLMResponse {
 }
 
 export interface LLMMessage {
-  role: "user" | "assistant" | "tool_result";
+  role: "system" | "user" | "assistant" | "tool_result";
   content: string;
   toolCallId?: string;
   toolName?: string;

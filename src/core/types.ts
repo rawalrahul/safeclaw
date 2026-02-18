@@ -5,6 +5,8 @@ export type GatewayState = "dormant" | "awake" | "action_pending" | "shutdown";
 export const BUILTIN_TOOL_NAMES = [
   "browser",
   "filesystem",
+  "shell",
+  "patch",
 ] as const;
 
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];

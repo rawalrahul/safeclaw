@@ -25,7 +25,8 @@ export class AnthropicProvider implements LLMProvider {
     tools: LLMToolSchema[],
     model: string
   ): Promise<LLMResponse> {
-    const anthropicMessages = this.convertMessages(messages);
+    const systemMsg = messages.find((m) => m.role === "system");
+    const anthropicMessages = this.convertMessages(messages.filter((m) => m.role !== "system"));
     const anthropicTools = tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -37,6 +38,10 @@ export class AnthropicProvider implements LLMProvider {
       max_tokens: 4096,
       messages: anthropicMessages,
     };
+
+    if (systemMsg) {
+      body.system = systemMsg.content;
+    }
 
     if (anthropicTools.length > 0) {
       body.tools = anthropicTools;

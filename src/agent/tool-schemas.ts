@@ -149,13 +149,44 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
       case "browser":
         schemas.push({
           name: "browse_web",
-          description: "Browse a URL or search the web.",
+          description: "Fetch a URL or search the web. Returns clean readable text using Firefox Reader Mode. For plain queries (not URLs), searches DuckDuckGo.",
           parameters: {
             type: "object",
             properties: {
-              query: { type: "string", description: "URL to visit or search query" },
+              query: { type: "string", description: "Full URL (https://...) or plain search query" },
             },
             required: ["query"],
+          },
+        });
+        break;
+
+      case "shell":
+        schemas.push({
+          name: "exec_shell",
+          description: "Execute a shell command in the workspace directory. Returns stdout and stderr. Requires owner confirmation.",
+          parameters: {
+            type: "object",
+            properties: {
+              command: { type: "string", description: "Shell command to execute" },
+            },
+            required: ["command"],
+          },
+        });
+        break;
+
+      case "patch":
+        schemas.push({
+          name: "apply_patch",
+          description:
+            "Apply a code patch to workspace files. Supports Add File, Update File (context diff), Delete File, Move to. " +
+            "Format: *** Begin Patch\\n*** Add File: foo.ts\\n<content>\\n*** Update File: bar.ts\\n-old\\n+new\\n*** End Patch. " +
+            "Requires owner confirmation.",
+          parameters: {
+            type: "object",
+            properties: {
+              patch: { type: "string", description: "Full patch text including *** Begin Patch and *** End Patch markers" },
+            },
+            required: ["patch"],
           },
         });
         break;
@@ -190,6 +221,8 @@ export function resolveToolCall(toolCallName: string): {
     write_file: { toolName: "filesystem", action: "write_file" },
     delete_file: { toolName: "filesystem", action: "delete_file" },
     browse_web: { toolName: "browser", action: "browse_web" },
+    exec_shell: { toolName: "shell", action: "exec_shell" },
+    apply_patch: { toolName: "patch", action: "apply_patch" },
   };
 
   return mapping[toolCallName] ?? null;
@@ -240,6 +273,16 @@ export function extractToolDetails(
       return {
         target: input.query as string,
         description: `browse_web: ${input.query}`,
+      };
+    case "exec_shell":
+      return {
+        target: input.command as string,
+        description: `exec_shell: ${input.command}`,
+      };
+    case "apply_patch":
+      return {
+        target: input.patch as string,
+        description: `apply_patch (${((input.patch as string) || "").split("\n").length} lines)`,
       };
     default:
       return { description: `${toolCallName}: ${JSON.stringify(input)}` };

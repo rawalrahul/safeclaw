@@ -27,12 +27,17 @@ export class GeminiProvider implements LLMProvider {
     tools: LLMToolSchema[],
     model: string
   ): Promise<LLMResponse> {
-    const contents = this.convertMessages(messages);
+    const systemMsg = messages.find((m) => m.role === "system");
+    const contents = this.convertMessages(messages.filter((m) => m.role !== "system"));
 
     const body: Record<string, unknown> = {
       contents,
       generationConfig: { maxOutputTokens: 4096 },
     };
+
+    if (systemMsg) {
+      body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+    }
 
     if (tools.length > 0) {
       body.tools = [

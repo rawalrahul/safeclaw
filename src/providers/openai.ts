@@ -75,7 +75,9 @@ export class OpenAIProvider implements LLMProvider {
     const result: OpenAIMessage[] = [];
 
     for (const msg of messages) {
-      if (msg.role === "user") {
+      if (msg.role === "system") {
+        result.push({ role: "system", content: msg.content });
+      } else if (msg.role === "user") {
         result.push({ role: "user", content: msg.content });
       } else if (msg.role === "assistant") {
         result.push({ role: "assistant", content: msg.content });

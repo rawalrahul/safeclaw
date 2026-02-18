@@ -5,6 +5,8 @@ import type { DynamicSkill } from "../skills/dynamic.js";
 const BUILTIN_TOOL_DESCRIPTIONS: Record<string, { description: string; dangerous: boolean }> = {
   browser: { description: "Web browsing and search", dangerous: true },
   filesystem: { description: "Read, write, and delete files", dangerous: true },
+  shell: { description: "Execute shell commands", dangerous: true },
+  patch: { description: "Apply code patches (add/update/delete/move files)", dangerous: true },
 };
 
 export class ToolRegistry {

@@ -2,6 +2,8 @@ import type { Gateway } from "../core/gateway.js";
 import type { ActionType } from "../core/types.js";
 import { fsReadFile, fsListDir, fsWriteFile, fsDeleteFile } from "./filesystem.js";
 import { fetchUrl } from "./browser.js";
+import { execShell } from "./shell.js";
+import { applyPatch } from "./patch.js";
 import { parseMcpLLMName } from "../mcp/manager.js";
 
 /**
@@ -36,6 +38,12 @@ export async function executeToolAction(
 
       case "browser":
         return (await fetchUrl(details.target || details.description)).result;
+
+      case "shell":
+        return await execShell(details.target || details.description, workspaceDir);
+
+      case "patch":
+        return await applyPatch(details.target || details.description, workspaceDir);
 
       default: {
         // ─── MCP tool call ─────────────────────────────────

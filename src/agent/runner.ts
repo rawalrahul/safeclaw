@@ -44,11 +44,10 @@ export async function runAgent(gw: Gateway, userText: string): Promise<string> {
   trimHistory(gw.conversation);
 
   // Build messages with system prompt prepended
-  const systemMessages = [
-    { role: "user" as const, content: SYSTEM_PROMPT },
-    { role: "assistant" as const, content: "Understood. I'm SafeClaw, ready to help." },
+  const messages = [
+    { role: "system" as const, content: SYSTEM_PROMPT },
+    ...gw.conversation.messages,
   ];
-  const messages = [...systemMessages, ...gw.conversation.messages];
 
   try {
     const response = await provider.chat(messages, toolSchemas, model);
@@ -135,11 +134,10 @@ async function handleToolCalls(
       addToolResult(gw.conversation, tc.id, tc.name, result);
 
       // Continue the conversation to let LLM process the result
-      const systemMessages = [
-        { role: "user" as const, content: SYSTEM_PROMPT },
-        { role: "assistant" as const, content: "Understood. I'm SafeClaw, ready to help." },
+      const messages = [
+        { role: "system" as const, content: SYSTEM_PROMPT },
+        ...gw.conversation.messages,
       ];
-      const messages = [...systemMessages, ...gw.conversation.messages];
 
       try {
         const followUp = await provider.chat(messages, toolSchemas, model);
@@ -213,11 +211,10 @@ export async function continueAfterToolResult(
   const enabledTools = gw.tools.getEnabled();
   const toolSchemas = [REQUEST_CAPABILITY_SCHEMA, ...buildToolSchemas(enabledTools)];
 
-  const systemMessages = [
-    { role: "user" as const, content: SYSTEM_PROMPT },
-    { role: "assistant" as const, content: "Understood. I'm SafeClaw, ready to help." },
+  const messages = [
+    { role: "system" as const, content: SYSTEM_PROMPT },
+    ...gw.conversation.messages,
   ];
-  const messages = [...systemMessages, ...gw.conversation.messages];
 
   try {
     const response = await provider.chat(messages, toolSchemas, model);
