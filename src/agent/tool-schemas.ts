@@ -161,17 +161,73 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
         break;
 
       case "shell":
-        schemas.push({
-          name: "exec_shell",
-          description: "Execute a shell command in the workspace directory. Returns stdout and stderr. Requires owner confirmation.",
-          parameters: {
-            type: "object",
-            properties: {
-              command: { type: "string", description: "Shell command to execute" },
+        schemas.push(
+          {
+            name: "exec_shell",
+            description: "Execute a shell command in the workspace directory. Returns stdout and stderr. Requires owner confirmation.",
+            parameters: {
+              type: "object",
+              properties: {
+                command: { type: "string", description: "Shell command to execute" },
+              },
+              required: ["command"],
             },
-            required: ["command"],
           },
-        });
+          {
+            name: "exec_shell_bg",
+            description: "Spawn a long-running shell command in the background. Returns a session_id immediately without waiting. Use process_poll to check output later. Requires owner confirmation.",
+            parameters: {
+              type: "object",
+              properties: {
+                command: { type: "string", description: "Shell command to run in the background" },
+              },
+              required: ["command"],
+            },
+          },
+          {
+            name: "process_poll",
+            description: "Read all accumulated output from a background process. Does not consume the buffer — you can poll again to see new output.",
+            parameters: {
+              type: "object",
+              properties: {
+                session_id: { type: "string", description: "Session ID returned by exec_shell_bg" },
+              },
+              required: ["session_id"],
+            },
+          },
+          {
+            name: "process_write",
+            description: "Write text to the stdin of a running background process (e.g. answer a prompt). Requires owner confirmation.",
+            parameters: {
+              type: "object",
+              properties: {
+                session_id: { type: "string", description: "Session ID returned by exec_shell_bg" },
+                input: { type: "string", description: "Text to write to stdin (newline appended automatically)" },
+              },
+              required: ["session_id", "input"],
+            },
+          },
+          {
+            name: "process_kill",
+            description: "Send SIGTERM to a background process to stop it. Requires owner confirmation.",
+            parameters: {
+              type: "object",
+              properties: {
+                session_id: { type: "string", description: "Session ID returned by exec_shell_bg" },
+              },
+              required: ["session_id"],
+            },
+          },
+          {
+            name: "process_list",
+            description: "List all active background process sessions and their status.",
+            parameters: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          }
+        );
         break;
 
       case "patch":
@@ -222,6 +278,11 @@ export function resolveToolCall(toolCallName: string): {
     delete_file: { toolName: "filesystem", action: "delete_file" },
     browse_web: { toolName: "browser", action: "browse_web" },
     exec_shell: { toolName: "shell", action: "exec_shell" },
+    exec_shell_bg: { toolName: "shell", action: "exec_shell_bg" },
+    process_poll: { toolName: "shell", action: "process_poll" },
+    process_write: { toolName: "shell", action: "process_write" },
+    process_kill: { toolName: "shell", action: "process_kill" },
+    process_list: { toolName: "shell", action: "process_list" },
     apply_patch: { toolName: "patch", action: "apply_patch" },
   };
 
@@ -278,6 +339,31 @@ export function extractToolDetails(
       return {
         target: input.command as string,
         description: `exec_shell: ${input.command}`,
+      };
+    case "exec_shell_bg":
+      return {
+        target: input.command as string,
+        description: `exec_shell_bg: ${input.command}`,
+      };
+    case "process_poll":
+      return {
+        target: input.session_id as string,
+        description: `process_poll: session ${input.session_id}`,
+      };
+    case "process_write":
+      return {
+        target: input.session_id as string,
+        content: input.input as string,
+        description: `process_write: session ${input.session_id}`,
+      };
+    case "process_kill":
+      return {
+        target: input.session_id as string,
+        description: `process_kill: session ${input.session_id}`,
+      };
+    case "process_list":
+      return {
+        description: "process_list",
       };
     case "apply_patch":
       return {

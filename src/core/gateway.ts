@@ -8,6 +8,11 @@ import { createSession } from "../agent/session.js";
 import { McpManager } from "../mcp/manager.js";
 import { readMcpServersConfig } from "../mcp/config.js";
 import { SkillsManager } from "../skills/manager.js";
+import { loadPromptSkills } from "../skills/prompt-skills.js";
+import type { PromptSkill } from "../skills/prompt-skills.js";
+import { ProcessRegistry } from "../tools/process-registry.js";
+import { readFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 export class Gateway {
   state: GatewayState = "dormant";
@@ -20,6 +25,12 @@ export class Gateway {
   conversation: ConversationSession | null = null;
   mcpManager: McpManager;
   skillsManager: SkillsManager;
+  processRegistry: ProcessRegistry;
+
+  /** Custom persona text loaded from ~/.safeclaw/soul.md on wake. */
+  soulPrompt: string | null = null;
+  /** Prompt-only skills loaded from ~/.safeclaw/prompt-skills/*.md on wake. */
+  promptSkills: PromptSkill[] = [];
 
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private onAutoSleep?: () => void;
@@ -32,6 +43,7 @@ export class Gateway {
     this.providerStore = new ProviderStore(config.storageDir);
     this.mcpManager = new McpManager();
     this.skillsManager = new SkillsManager(config.storageDir);
+    this.processRegistry = new ProcessRegistry();
     this.onAutoSleep = onAutoSleep;
   }
 
@@ -62,6 +74,9 @@ export class Gateway {
 
     await this.audit.log("gateway_wake");
 
+    // Load soul file and prompt skills in background (non-blocking)
+    void this.loadPersonality();
+
     // Fire-and-forget: MCP discovery runs in background so slow/unreachable
     // servers don't block the bot. Tools appear in /tools once discovery finishes.
     void this.connectMcpServers();
@@ -73,6 +88,27 @@ export class Gateway {
       `Use /tools to see tools, /enable <tool> to activate one.\n` +
       `Use /help for all commands.`
     );
+  }
+
+  /** Load soul.md and prompt skills from storage dir. Fire-and-forget on wake. */
+  private async loadPersonality(): Promise<void> {
+    // Soul file
+    try {
+      const soulPath = join(this.config.storageDir, "soul.md");
+      this.soulPrompt = await readFile(soulPath, "utf8");
+      console.log("[soul] Loaded soul.md custom persona.");
+    } catch {
+      this.soulPrompt = null; // Not present — use default persona
+    }
+
+    // Prompt skills
+    const promptSkillsDir = join(this.config.storageDir, "prompt-skills");
+    await mkdir(promptSkillsDir, { recursive: true });
+    this.promptSkills = await loadPromptSkills(promptSkillsDir);
+    const active = this.promptSkills.filter(s => s.active).length;
+    if (this.promptSkills.length > 0) {
+      console.log(`[skills] Loaded ${this.promptSkills.length} prompt skill(s), ${active} active.`);
+    }
   }
 
   private async connectMcpServers(): Promise<void> {
@@ -97,9 +133,12 @@ export class Gateway {
     this.state = "dormant";
     this.session = null;
     this.conversation = null;
+    this.soulPrompt = null;
+    this.promptSkills = [];
     this.tools.disableAll();
     this.tools.clearMcp();
     this.approvals.cleanupExpired();
+    this.processRegistry.dispose();
     await this.mcpManager.disconnectAll();
 
     await this.audit.log("gateway_sleep");
@@ -111,8 +150,11 @@ export class Gateway {
     this.state = "shutdown";
     this.session = null;
     this.conversation = null;
+    this.soulPrompt = null;
+    this.promptSkills = [];
     this.tools.disableAll();
     this.tools.clearMcp();
+    this.processRegistry.dispose();
     await this.mcpManager.disconnectAll();
 
     await this.audit.log("gateway_kill");
@@ -123,8 +165,11 @@ export class Gateway {
     this.state = "dormant";
     this.session = null;
     this.conversation = null;
+    this.soulPrompt = null;
+    this.promptSkills = [];
     this.tools.disableAll();
     this.tools.clearMcp();
+    this.processRegistry.dispose();
     await this.mcpManager.disconnectAll();
 
     await this.audit.log("gateway_auto_sleep", {

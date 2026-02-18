@@ -39,8 +39,26 @@ export async function executeToolAction(
       case "browser":
         return (await fetchUrl(details.target || details.description)).result;
 
-      case "shell":
-        return await execShell(details.target || details.description, workspaceDir);
+      case "shell": {
+        switch (action) {
+          case "exec_shell":
+            return await execShell(details.target || details.description, workspaceDir);
+          case "exec_shell_bg": {
+            const sessionId = gw.processRegistry.spawn(details.target || details.description, workspaceDir);
+            return `Background process started.\nSession ID: ${sessionId}\n\nUse process_poll with session_id="${sessionId}" to check output.`;
+          }
+          case "process_poll":
+            return gw.processRegistry.poll(details.target || "");
+          case "process_write":
+            return gw.processRegistry.write(details.target || "", details.content || "");
+          case "process_kill":
+            return gw.processRegistry.kill(details.target || "");
+          case "process_list":
+            return gw.processRegistry.list();
+          default:
+            return `Unknown shell action: ${action}`;
+        }
+      }
 
       case "patch":
         return await applyPatch(details.target || details.description, workspaceDir);

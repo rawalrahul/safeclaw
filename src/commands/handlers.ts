@@ -6,6 +6,7 @@ import { PROVIDER_NAMES, DEFAULT_MODELS } from "../providers/types.js";
 import type { ProviderName } from "../providers/types.js";
 import { continueAfterToolResult } from "../agent/runner.js";
 import { fetchModels } from "../providers/models.js";
+import { formatPromptSkills } from "../skills/prompt-skills.js";
 
 /**
  * Handle a parsed command and return the response message.
@@ -64,6 +65,9 @@ export async function handleCommand(
 
     case "audit":
       return handleAudit(gw, cmd.args);
+
+    case "skills":
+      return { reply: formatPromptSkills(gw.promptSkills) };
 
     case "help":
       return { reply: HELP_TEXT };
@@ -450,9 +454,15 @@ Permissions:
 Info:
   /status — Show gateway state
   /audit [n] — Show last N audit events
+  /skills — List prompt skills from ~/.safeclaw/prompt-skills/
   /help — Show this help
 
-Builtin tools: browser, filesystem, shell, code_exec, network, messaging
+Builtin tools: browser, filesystem, shell, patch
+Shell tool includes background process management (exec_shell_bg, process_poll, process_write, process_kill).
 MCP tools: auto-discovered on /wake from ~/.claude/settings.json
+
+Customisation:
+  ~/.safeclaw/soul.md — Custom persona injected into system prompt on wake
+  ~/.safeclaw/prompt-skills/*.md — Prompt-only skills (teach LLM CLI patterns)
 
 Security: All tools disabled by default. Dangerous actions always require /confirm.`;

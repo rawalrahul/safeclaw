@@ -6,13 +6,16 @@ import { handleCommand } from "../../commands/handlers.js";
 import { sendMessage } from "./sender.js";
 import { handleFreeText } from "./free-text.js";
 
+/** Debounce delay in ms — rapid messages are merged into one agent run. */
+const DEBOUNCE_MS = 500;
+
 /**
  * Register the message handler on the Telegram bot.
  *
  * Security flow:
  * 1. Check if sender is the authenticated owner → silent drop if not
  * 2. Parse for commands → route to command handler
- * 3. If not a command and gateway is awake → handle as free-text (tool invocation)
+ * 3. If not a command and gateway is awake → debounce + handle as free-text
  * 4. If dormant → only /wake works, everything else silently ignored
  */
 export function registerHandler(
@@ -20,6 +23,12 @@ export function registerHandler(
   gw: Gateway,
   onShutdown: () => void
 ): void {
+  // Per-chat debounce state: chatId → { timer, accumulated text lines }
+  const debounceMap = new Map<number, {
+    timer: ReturnType<typeof setTimeout>;
+    lines: string[];
+  }>();
+
   bot.on("message:text", async (ctx: Context) => {
     const senderId = ctx.from?.id;
     const chatId = ctx.chat?.id;
@@ -49,15 +58,26 @@ export function registerHandler(
 
     // ─── Step 3: Free text (only when awake) ──────────
     if (!gw.isAwake()) {
-      // Dormant: silently ignore non-command messages
-      // Only /wake breaks through
-      return;
+      return; // Dormant: silently ignore non-command messages
     }
 
     gw.touchActivity();
 
-    // Handle as a natural language request that may invoke tools
-    const response = await handleFreeText(gw, text);
-    await sendMessage(bot, chatId, response);
+    // ─── Debounce: merge burst messages into one agent call ───
+    const existing = debounceMap.get(chatId);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.lines.push(text);
+    }
+
+    const entry = existing ?? { lines: [text], timer: null! };
+    if (!existing) debounceMap.set(chatId, entry);
+
+    entry.timer = setTimeout(async () => {
+      debounceMap.delete(chatId);
+      const combined = entry.lines.join("\n");
+      const response = await handleFreeText(gw, combined);
+      await sendMessage(bot, chatId, response);
+    }, DEBOUNCE_MS);
   });
 }

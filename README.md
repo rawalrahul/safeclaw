@@ -2,7 +2,7 @@
 
 **Sleep-by-default. Tools off by default. You hold the keys.**
 
-SafeClaw is a privacy-first AI assistant you control from your phone via Telegram. You connect it to your own LLM API key (Anthropic Claude, OpenAI GPT, or Google Gemini). It auto-discovers tools from any MCP servers you've configured for Claude Code.
+SafeClaw is a privacy-first AI assistant you control from your phone via Telegram. You connect it to your own LLM API key (Anthropic Claude, OpenAI GPT, Google Gemini, or a local Ollama instance). It auto-discovers tools from any MCP servers you've configured for Claude Code.
 
 Unlike always-on AI gateways, SafeClaw inverts the defaults:
 
@@ -191,33 +191,6 @@ Or list all models currently installed in your Ollama instance:
 /model list ollama
 ```
 
-Example output:
-```
-Active: ollama / llama3.2
-
-ollama — 3 model(s):
-  ▶ llama3.2
-    qwen2.5
-    mistral-nemo
-
-Switch with: /model <provider>/<model-id>
-```
-
-#### Running Ollama on a remote machine / GPU server
-
-If you have a machine with a GPU, you can run Ollama there and point SafeClaw at it:
-
-```bash
-# On the GPU server — bind to all interfaces
-OLLAMA_HOST=0.0.0.0 ollama serve
-```
-
-```
-# In Telegram
-/auth ollama http://<server-ip>:11434
-/model ollama/llama3.3
-```
-
 ---
 
 ### Check what's configured
@@ -226,28 +199,13 @@ OLLAMA_HOST=0.0.0.0 ollama serve
 /auth status
 ```
 
-Output example:
-```
-Auth Status:
-  Active: anthropic / claude-sonnet-4-5-20250929
-
-  Providers:
-    anthropic: sk-ant-ap...a1b2  (active)
-    openai: not configured
-    gemini: AIzaSy...x9y8
-    ollama: http://localhost:11434
-```
-
 ### Remove a stored API key
 
 ```
 /auth remove anthropic
-/auth remove openai
-/auth remove gemini
-/auth remove ollama
 ```
 
-If you remove the active provider, SafeClaw automatically switches to another configured one. If it was the last key, the active provider is cleared and you'll need to add a new one before the LLM agent can respond.
+If you remove the active provider, SafeClaw automatically switches to another configured one.
 
 ---
 
@@ -258,26 +216,7 @@ If you remove the active provider, SafeClaw automatically switches to another co
 ```
 /model                          → list all models for every configured provider
 /model list anthropic           → list only Anthropic models
-/model list openai              → list only OpenAI models
-/model list gemini              → list only Gemini models
-```
-
-Example output:
-```
-Active: anthropic / claude-sonnet-4-5-20250929
-
-anthropic — 6 model(s):
-  ▶ claude-sonnet-4-5-20250929  (Claude Sonnet 4.5)
-    claude-opus-4-6  (Claude Opus 4.6)
-    claude-haiku-4-5-20251001  (Claude Haiku 4.5)
-    ...
-
-gemini — 12 model(s):
-    gemini-2.0-flash  (Gemini 2.0 Flash)
-    gemini-1.5-pro  (Gemini 1.5 Pro)
-    ...
-
-Switch with: /model <provider>/<model-id>
+/model <provider/model>         → switch to a specific model
 ```
 
 To switch:
@@ -301,7 +240,8 @@ The bot replies with available commands and the auto-sleep timeout. Now you can:
 
 ```
 /enable filesystem       → allow file reads and writes
-/enable browser          → allow web browsing
+/enable browser          → allow web browsing and URL auto-enrichment
+/enable shell            → allow shell commands (includes background processes)
 /tools                   → see everything and its ON/OFF status
 ```
 
@@ -331,7 +271,7 @@ Bot:  Approved. [LLM follow-up: "Done! I've written hn_fetch.py ..."]
 | Command | Works dormant? | Description |
 |---------|---------------|-------------|
 | `/wake` | Yes | Wake the gateway |
-| `/sleep` | No | Return to dormant, disconnect MCP servers |
+| `/sleep` | No | Return to dormant, disconnect MCP servers, kill background processes |
 | `/kill` | No | Emergency shutdown, stops the process |
 
 ### LLM Provider Setup
@@ -349,13 +289,16 @@ Bot:  Approved. [LLM follow-up: "Done! I've written hn_fetch.py ..."]
 
 | Command | Description |
 |---------|-------------|
-| `/tools` | List all tools (builtin + MCP) with ON/OFF status |
+| `/tools` | List all tools (builtin + MCP + dynamic skills) with ON/OFF status |
 | `/enable <tool>` | Enable a builtin tool |
 | `/disable <tool>` | Disable a builtin tool |
 | `/enable mcp:<server>` | Enable all tools for an MCP server |
 | `/disable mcp:<server>` | Disable all tools for an MCP server |
+| `/enable skill__<name>` | Enable a dynamically installed skill |
+| `/disable skill__<name>` | Disable a dynamically installed skill |
+| `/skills` | List prompt skills from `~/.safeclaw/prompt-skills/` |
 
-**Builtin tools:** `browser`, `filesystem`, `shell`, `code_exec`, `network`, `messaging`
+**Builtin tools:** `browser`, `filesystem`, `shell`, `patch`
 
 ### Permissions
 
@@ -371,7 +314,115 @@ Bot:  Approved. [LLM follow-up: "Done! I've written hn_fetch.py ..."]
 |---------|-------------|
 | `/status` | Gateway state, uptime, idle time, enabled tools |
 | `/audit [n]` | Last N audit log events (default 10) |
+| `/skills` | Prompt skills status and active count |
 | `/help` | All commands inline in Telegram |
+
+---
+
+## Customisation
+
+### Soul File — Custom Persona
+
+Create `~/.safeclaw/soul.md` to override SafeClaw's default persona. It is loaded on every `/wake` and appended to the system prompt, so any instructions or personality traits in it take precedence.
+
+```markdown
+# My Assistant
+
+You are an expert DevOps assistant. Keep responses extremely terse.
+Always suggest the simplest possible solution.
+Prefer shell one-liners over multi-step processes.
+```
+
+The file is optional — delete it to revert to the default persona.
+
+### Prompt Skills — Teach the LLM CLI Patterns
+
+Drop `.md` files into `~/.safeclaw/prompt-skills/` to teach SafeClaw how to use specific CLI tools without writing any code. On each `/wake`, SafeClaw scans this directory, checks whether required binaries are present on your PATH, and injects the content of active skills into the system prompt.
+
+**Example: `~/.safeclaw/prompt-skills/weather.md`**
+
+```markdown
+---
+title: Weather
+bins: []
+---
+
+## Checking the weather
+
+To look up current weather, run:
+
+    curl wttr.in/London?format=3
+
+Replace "London" with any city name. No API key needed.
+For a full forecast: `curl wttr.in/London`
+```
+
+**Example with bin requirements: `~/.safeclaw/prompt-skills/github.md`**
+
+```markdown
+---
+title: GitHub CLI
+bins: [gh]
+---
+
+## Using the GitHub CLI
+
+Always prefer `gh` for GitHub operations:
+
+- List open PRs: `gh pr list`
+- View PR checks: `gh pr checks <number>`
+- View failed run logs: `gh run view --log-failed`
+- Create issue: `gh issue create --title "..." --body "..."`
+- Search code: `gh api search/code?q=...`
+```
+
+This skill only activates if `gh` is installed on PATH. Run `/skills` to see which are active.
+
+**Frontmatter options:**
+
+```yaml
+---
+title: My Tool         # displayed in /skills — defaults to filename
+bins: [git, curl]      # ALL must be on PATH for skill to activate
+anyBins: [jq, python3] # AT LEAST ONE must be on PATH
+---
+```
+
+---
+
+## Background Process Execution
+
+When the `shell` tool is enabled, the LLM can run commands in the background — useful for long-running tasks like builds, installs, or servers.
+
+```
+You:  run npm install in the background
+
+Bot:  Action pending approval:
+        exec_shell_bg: npm install
+      /confirm a1b2c3d4
+
+You:  /confirm a1b2c3d4
+Bot:  Background process started.
+      Session ID: f3a9b2c1
+      Use process_poll with session_id="f3a9b2c1" to check output.
+
+You:  check on the npm install
+Bot:  [calls process_poll f3a9b2c1 — returns accumulated output]
+      added 842 packages in 23s
+      [Process still running]
+```
+
+**Background process actions** (all via the `shell` tool):
+
+| Action | Safe? | Description |
+|--------|-------|-------------|
+| `exec_shell_bg` | Requires `/confirm` | Spawn a command, return session ID immediately |
+| `process_poll` | Safe (no confirm) | Read accumulated output from a session |
+| `process_list` | Safe (no confirm) | List all active/recent background sessions |
+| `process_write` | Requires `/confirm` | Write to stdin of a running process |
+| `process_kill` | Requires `/confirm` | Send SIGTERM to a running process |
+
+Sessions are automatically cleaned up 30 minutes after the process exits. All running processes are terminated on `/sleep`, `/kill`, or auto-sleep.
 
 ---
 
@@ -400,70 +451,24 @@ Bot:  🔧 Skill Proposal: pdf_create
       Description: Create PDF documents from text content
       Needed for: Generating a PDF summary of workspace notes
 
-      ⚠️  This skill performs potentially dangerous operations (file writes, network calls, etc.).
+      ⚠️  This skill performs potentially dangerous operations.
 
       Proposed code:
       ```
-      import { writeFileSync } from "node:fs";
-      import { join } from "node:path";
-
       export const skill = {
         name: "pdf_create",
-        description: "Create PDF documents from text content",
-        dangerous: true,
-        parameters: {
-          type: "object",
-          properties: {
-            filename: { type: "string" },
-            content: { type: "string" }
-          },
-          required: ["filename", "content"]
-        },
-        async execute(params) {
-          // Simple text file fallback if pdfkit not available
-          const path = join(process.env.WORKSPACE_DIR || ".", params.filename);
-          writeFileSync(path, params.content, "utf8");
-          return `Saved to ${params.filename}`;
-        }
+        ...
+        async execute(params) { ... }
       };
       ```
-
-      ⚠️  This code will run inside the SafeClaw process with full Node.js access.
-      Review it carefully before approving.
-
-      Expires in: 300s
 
       /confirm a1b2c3d4  →  install skill
       /deny a1b2c3d4     →  reject proposal
 
 You:  /confirm a1b2c3d4
 
-Bot:  Approved.
-      Skill "pdf_create" has been installed and is now active.
+Bot:  Skill "pdf_create" has been installed and is now active.
       [Agent continues and creates the PDF...]
-```
-
-### Skill storage
-
-Skills live in `~/.safeclaw/skills/` as ES module JavaScript files (`.mjs`). They load on every `/wake`. You can inspect or delete them directly:
-
-```bash
-ls ~/.safeclaw/skills/
-cat ~/.safeclaw/skills/pdf_create.mjs
-rm ~/.safeclaw/skills/pdf_create.mjs   # remove a skill permanently
-```
-
-### Skill tool names
-
-Installed skills appear in `/tools` under **Dynamic Skills** and are referenced with a `skill__` prefix:
-
-```
-/tools
-→  Dynamic Skills (installed by agent):
-     OFF  skill__pdf_create — Create PDF documents from text content ⚠️
-
-/enable skill__pdf_create
-/disable skill__pdf_create
 ```
 
 ### Security
@@ -471,7 +476,6 @@ Installed skills appear in `/tools` under **Dynamic Skills** and are referenced 
 - **Every skill install requires `/confirm`** — same as any other dangerous action
 - **Full code is shown before you approve** — never a black box
 - **Skills run with full Node.js access** — treat them like running a shell script you wrote yourself
-- **Skills are disabled by default after install** — the agent auto-enables the freshly installed skill for the current session, but after a `/sleep` + `/wake` cycle you control whether it's enabled via `/enable skill__<name>`
 
 ---
 
@@ -501,77 +505,51 @@ SafeClaw reads the MCP server configuration from your Claude Code settings and a
 ```json
 {
   "mcpServers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    },
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {
-        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
-      }
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
     }
   }
 }
 ```
 
-Environment variable placeholders like `${GITHUB_TOKEN}` are resolved from the process environment. Servers that fail to connect (wrong command, network error, 401/403 auth) are skipped with a console warning — they don't crash the bot.
-
 > **Note:** HTTP/SSE MCP servers are not yet supported. Only `stdio` servers (those with a `command` field) are connected.
 
 ---
 
-## A Realistic Session
+## URL Auto-Enrichment
+
+When the `browser` tool is enabled and your message contains a URL, SafeClaw fetches it automatically before sending to the LLM — the LLM sees the page content as inline context without needing an explicit tool call.
 
 ```
-[Phone]
-
-You:   /wake
-Bot:   Gateway awake. All tools are disabled by default.
-       Auto-sleep in 30 minutes of inactivity.
-       Use /tools to see tools, /enable <tool> to activate one.
-
-You:   /tools
-Bot:   Tool Registry:
-         OFF  browser — Web browsing and search
-         OFF  filesystem — Read, write, and delete files
-         OFF  shell — Execute shell commands
-         OFF  code_exec — Run code snippets
-         OFF  network — HTTP requests and API calls
-         OFF  messaging — Send messages to contacts
-
-       MCP Servers:
-         github:
-           OFF  mcp__github__search_repositories — Search GitHub repositories
-           OFF  mcp__github__create_issue — Create a GitHub issue
-           OFF  mcp__github__get_file_contents — Get file contents from a repo
-
-You:   /enable filesystem
-Bot:   filesystem is now ENABLED.
-       Dangerous actions will still require /confirm before executing.
-
-You:   /enable mcp:github
-Bot:   Enabled 3 tool(s) for MCP server "github".
-
-You:   search for typescript MCP server examples on GitHub
-Bot:   Found 12 repositories matching "typescript MCP server":
-       1. modelcontextprotocol/typescript-sdk — ...
-       2. ...
-
-You:   write those results to a file called mcp-examples.md
-Bot:   Action pending approval:
-         Details: write_file: mcp-examples.md (1.4 KB)
-         Expires in: 300s
-       Reply /confirm 9f2e1a8b or /deny 9f2e1a8b
-
-You:   /confirm 9f2e1a8b
-Bot:   Approved.
-       Done! I've saved the search results to mcp-examples.md in your workspace.
-
-You:   /sleep
-Bot:   Gateway dormant. Goodnight.
+You:  summarise this article https://example.com/article
+Bot:  [fetches the URL silently, LLM sees the content, summarises it]
 ```
+
+Up to 3 URLs per message are fetched, each capped at 6 KB of extracted text. If the browser tool is disabled, URLs are passed to the LLM as-is.
+
+---
+
+## Context Management
+
+### Context window guard
+
+Tool results larger than 8 KB are automatically truncated before being added to the conversation. This prevents a single large file read or web fetch from consuming the entire context window.
+
+### Auto-compaction
+
+When the conversation history grows beyond ~60 000 tokens, SafeClaw calls the LLM to summarise the oldest 20 messages and replaces them with a compact summary block. You'll see:
+
+```
+📦 Conversation compacted to fit context window.
+```
+
+This lets conversations run indefinitely without hitting the model's context limit.
+
+### Message debouncing
+
+If you send multiple messages in quick succession (within 500 ms), they are merged into a single agent run. This prevents duplicate parallel LLM calls from burst typing.
 
 ---
 
@@ -580,12 +558,13 @@ Bot:   Gateway dormant. Goodnight.
 - **Sleep-by-default**: Gateway starts dormant and ignores all messages except `/wake` from the owner
 - **Single owner**: Only your Telegram user ID is authorized. Everyone else is silently ignored
 - **Tools off by default**: All tools — builtin and MCP — are disabled on every wake
-- **Confirm before dangerous action**: Write, delete, execute, send, and create operations require `/confirm`
-- **Auto-sleep**: Inactivity timeout (default 30 min) returns to dormant automatically
+- **Confirm before dangerous action**: Write, delete, execute, send, and background-spawn operations require `/confirm`
+- **Auto-sleep**: Inactivity timeout (default 30 min) returns to dormant automatically; kills background processes
 - **Full audit trail**: Every event logged to `~/.safeclaw/audit.jsonl`
 - **Separate identity**: The bot is its own Telegram account, never acts as you
 - **MCP isolation**: Each MCP server runs as a subprocess; crashing servers don't crash SafeClaw
 - **Workspace sandboxing**: Filesystem tool is restricted to `WORKSPACE_DIR` — no escape via `../`
+- **Skill review**: Dynamically proposed skills are always shown in full before installation
 
 ---
 
@@ -602,9 +581,9 @@ safeclaw/
 │   │   └── config.ts             # .env loader and config validation
 │   ├── channels/telegram/
 │   │   ├── client.ts             # grammy bot setup
-│   │   ├── handler.ts            # Inbound routing, auth check, command dispatch
+│   │   ├── handler.ts            # Inbound routing, auth check, 500ms debounce
 │   │   ├── sender.ts             # Outbound with message chunking for long replies
-│   │   └── free-text.ts          # Routes plain messages to LLM agent
+│   │   └── free-text.ts          # URL enrichment + LLM agent routing
 │   ├── providers/
 │   │   ├── types.ts              # LLMProvider interface, ProviderName, defaults
 │   │   ├── anthropic.ts          # Anthropic Claude API client
@@ -615,21 +594,22 @@ safeclaw/
 │   │   ├── store.ts              # Persists API keys to ~/.safeclaw/auth.json
 │   │   └── resolver.ts           # Picks the active provider and model
 │   ├── agent/
-│   │   ├── session.ts            # Conversation history (trimmed to avoid token limits)
-│   │   ├── tool-schemas.ts       # Builtin tool schemas + MCP schema passthrough
-│   │   └── runner.ts             # LLM loop: execute safe tools, queue dangerous ones
+│   │   ├── session.ts            # Conversation history + token estimation
+│   │   ├── tool-schemas.ts       # Builtin + background process tool schemas
+│   │   └── runner.ts             # LLM loop: dynamic system prompt, safe execute,
+│   │                             #   dangerous queue, context guard, auto-compaction
 │   ├── tools/
 │   │   ├── registry.ts           # Tool map: enable/disable, MCP register/clear
 │   │   ├── executor.ts           # Dispatches to real impl or MCP callTool
 │   │   ├── filesystem.ts         # Real fs: read, list, write, delete (sandboxed)
-│   │   ├── browser.ts            # Stub (simulated response)
-│   │   ├── shell.ts              # Stub
-│   │   ├── messaging.ts          # Stub
-│   │   ├── code_exec.ts          # Stub
-│   │   └── network.ts            # Stub
+│   │   ├── browser.ts            # Real: fetch + Readability extraction
+│   │   ├── shell.ts              # Real: child_process exec with 30s timeout
+│   │   ├── patch.ts              # Real: apply Add/Update/Delete/Move patches
+│   │   └── process-registry.ts  # Background process sessions + TTL sweeper
 │   ├── skills/
 │   │   ├── dynamic.ts            # DynamicSkill interface + .mjs file loader
-│   │   └── manager.ts            # SkillsManager: install, load, persist skills
+│   │   ├── manager.ts            # SkillsManager: install, load, persist skills
+│   │   └── prompt-skills.ts      # SKILL.md loader: bin-check + system prompt injection
 │   ├── mcp/
 │   │   ├── config.ts             # Reads ~/.claude/settings.json mcpServers block
 │   │   ├── manager.ts            # Connect/discover/call/disconnect MCP servers
@@ -650,33 +630,52 @@ safeclaw/
 └── CLAUDE.md                     # Architecture and dev guidelines
 ```
 
+### User data directories (`~/.safeclaw/`)
+
+```
+~/.safeclaw/
+├── auth.json                     # Stored API keys (encrypted at rest via OS perms)
+├── audit.jsonl                   # Append-only audit log
+├── soul.md                       # Optional custom persona (injected on wake)
+├── prompt-skills/                # SKILL.md files — teach LLM CLI patterns
+│   ├── weather.md
+│   ├── github.md
+│   └── ...
+└── skills/                       # Dynamically installed JS skills
+    ├── pdf_create.mjs
+    └── ...
+```
+
 ---
 
-## What's Real vs. Simulated
+## What's Implemented
 
-### Real (fully implemented)
-- Gateway state machine with all transitions (dormant / awake / action_pending / shutdown)
-- Single-owner authentication with silent drop for unauthorized senders
-- Tool registry with runtime enable/disable
-- Permission confirmation flow with 5-minute expiry
-- JSONL audit logging to `~/.safeclaw/audit.jsonl`
-- Telegram bot integration (grammy)
-- LLM agent — **Anthropic Claude, OpenAI GPT, Google Gemini, and Ollama (local)** with real tool_use/function calling
-- Live model listing fetched from provider APIs (`/model`)
-- Persistent API key storage in `~/.safeclaw/auth.json`
-- **Real filesystem** — read, write, list, delete (sandboxed to `WORKSPACE_DIR`)
-- **MCP auto-discovery** — stdio servers from `~/.claude/settings.json`
-- **Self-extending skills** — agent proposes new capabilities, owner approves, skills are dynamically installed and loaded without restart
-- Conversation sessions with history trimming
+All features are fully implemented — there are no stubs.
 
-### Simulated (stub responses)
-- `browser` — returns mock search results
-- `shell` — returns mock command output
-- `messaging` — pretends to send a message
-- `code_exec` — returns mock execution result
-- `network` — returns mock HTTP response
-
-These stubs demonstrate the full permission flow safely. Replacing them with real implementations is straightforward — see the pattern in `src/tools/filesystem.ts`.
+| Feature | Status |
+|---------|--------|
+| Gateway state machine (dormant/awake/action_pending/shutdown) | ✅ |
+| Single-owner auth with silent drop | ✅ |
+| Runtime tool enable/disable | ✅ |
+| `/confirm` dangerous action flow with 5-min expiry | ✅ |
+| JSONL audit log | ✅ |
+| Telegram bot (grammy) | ✅ |
+| LLM agent — Anthropic, OpenAI, Gemini, Ollama | ✅ |
+| Live model listing from provider APIs | ✅ |
+| Persistent API key storage | ✅ |
+| Real filesystem tool (sandboxed to `WORKSPACE_DIR`) | ✅ |
+| Real browser tool (fetch + Readability extraction) | ✅ |
+| Real shell tool (`child_process`, 30s timeout) | ✅ |
+| Apply-patch tool (Add/Update/Delete/Move) | ✅ |
+| MCP auto-discovery from `~/.claude/settings.json` | ✅ |
+| Self-extending dynamic skills (LLM proposes, owner approves) | ✅ |
+| Soul file — custom persona from `~/.safeclaw/soul.md` | ✅ |
+| Prompt skills — SKILL.md files injected into system prompt | ✅ |
+| URL auto-enrichment — auto-fetch URLs in messages | ✅ |
+| Message debouncing — merge burst messages | ✅ |
+| Context window guard — truncate large tool results | ✅ |
+| Auto-compaction — LLM summarises old history | ✅ |
+| Background process execution — `exec_shell_bg` + poll/write/kill | ✅ |
 
 ---
 
@@ -691,6 +690,7 @@ These stubs demonstrate the full permission flow safely. Replacing them with rea
 | LLM: OpenAI | OpenAI Chat Completions API (raw fetch) |
 | LLM: Gemini | Google Generative Language API (raw fetch) |
 | LLM: Ollama | Ollama OpenAI-compatible API (local, raw fetch) |
+| Browser | `@mozilla/readability` + `linkedom` |
 | MCP | `@modelcontextprotocol/sdk` ^1.12.0 |
 | Storage | File-based JSON + JSONL (no database) |
 | Dev runner | `tsx` (TypeScript execute, no build step needed) |
@@ -701,17 +701,25 @@ These stubs demonstrate the full permission flow safely. Replacing them with rea
 
 - [x] Gateway state machine, Telegram integration, commands, audit
 - [x] Real filesystem tools with path sandboxing
-- [x] LLM agent — Anthropic Claude, OpenAI GPT, Google Gemini, and Ollama (local) — with tool calling
-- [x] Live model listing fetched from provider APIs (+ local listing for Ollama)
+- [x] LLM agent — Anthropic, OpenAI, Gemini, Ollama — with tool calling
+- [x] Live model listing from provider APIs
 - [x] MCP tool auto-discovery from `~/.claude/settings.json`
 - [x] Self-extending skills — agent proposes and installs new capabilities at runtime
-- [ ] Real browser tool (Playwright / Puppeteer)
-- [ ] Real shell execution (with timeout and output limits)
+- [x] Real browser tool (fetch + Readability)
+- [x] Real shell execution (with timeout and output limits)
+- [x] Apply-patch tool for code editing
+- [x] Soul file — custom persona without code changes
+- [x] Prompt skills — SKILL.md files teach CLI patterns
+- [x] URL auto-enrichment in messages
+- [x] Message debouncing
+- [x] Context window guard
+- [x] Auto-compaction of conversation history
+- [x] Background process execution with poll/write/kill
 - [ ] HTTP/SSE MCP server support
 - [ ] WhatsApp Cloud API integration
 - [ ] Web dashboard for visual tool management
 - [ ] Multi-owner support with invite codes
-- [ ] Rate limiting per tool per session
+- [ ] Semantic memory (SQLite + vector search across sessions)
 
 ---
 

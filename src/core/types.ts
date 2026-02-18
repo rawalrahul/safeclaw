@@ -60,6 +60,11 @@ export type ActionType =
   | "list_dir"
   | "delete_file"
   | "exec_shell"
+  | "exec_shell_bg"
+  | "process_poll"
+  | "process_write"
+  | "process_kill"
+  | "process_list"
   | "exec_code"
   | "send_message"
   | "network_request"
@@ -67,7 +72,13 @@ export type ActionType =
   | "skill_call"
   | "skill_install";
 
-export const SAFE_ACTIONS: ActionType[] = ["read_file", "list_dir", "browse_web"];
+export const SAFE_ACTIONS: ActionType[] = [
+  "read_file",
+  "list_dir",
+  "browse_web",
+  "process_poll",
+  "process_list",
+];
 
 export interface PermissionRequest {
   approvalId: string;
@@ -129,6 +140,7 @@ export type CommandName =
   | "audit"
   | "auth"
   | "model"
+  | "skills"
   | "help";
 
 export interface ParsedCommand {

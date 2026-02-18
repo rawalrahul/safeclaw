@@ -3,12 +3,17 @@ import type { ToolName, ActionType } from "../../core/types.js";
 import { SAFE_ACTIONS } from "../../core/types.js";
 import { runAgent } from "../../agent/runner.js";
 import { executeToolAction } from "../../tools/executor.js";
+import { fetchUrl } from "../../tools/browser.js";
 
 /**
  * Handle free-text messages when the gateway is awake.
  *
  * If an LLM provider is configured, routes through the agent (which uses
  * real tool_use to pick tools). Otherwise falls back to keyword patterns.
+ *
+ * URL auto-enrichment: if the browser tool is enabled and the message contains
+ * one or more https?:// URLs, we fetch them proactively and prepend their
+ * content to the message so the LLM sees the page without needing a tool call.
  */
 export async function handleFreeText(
   gw: Gateway,
@@ -16,11 +21,42 @@ export async function handleFreeText(
 ): Promise<string> {
   // If LLM provider is configured, use the agent
   if (gw.providerStore.getActiveProvider()) {
-    return runAgent(gw, text);
+    const enrichedText = await enrichWithUrls(gw, text);
+    return runAgent(gw, enrichedText);
   }
 
   // ─── Keyword fallback (no LLM configured) ──────────────
   return keywordFallback(gw, text);
+}
+
+/** Max chars of URL-fetched content to prepend per URL. */
+const URL_ENRICH_MAX_CHARS = 6_000;
+
+/**
+ * Detect URLs in the message. If the browser tool is enabled, fetch each URL
+ * and prepend the extracted text so the LLM sees it as inline context.
+ */
+async function enrichWithUrls(gw: Gateway, text: string): Promise<string> {
+  if (!gw.tools.isEnabled("browser")) return text;
+
+  const urlRegex = /https?:\/\/[^\s<>"'\]]+/gi;
+  const urls = [...new Set(text.match(urlRegex) ?? [])];
+  if (urls.length === 0) return text;
+
+  const snippets: string[] = [];
+  for (const url of urls.slice(0, 3)) { // limit to 3 URLs per message
+    try {
+      const fetched = await fetchUrl(url);
+      const content = fetched.result.slice(0, URL_ENRICH_MAX_CHARS);
+      snippets.push(`[Auto-fetched: ${url}]\n${content}`);
+    } catch {
+      // Silently skip failed fetches — LLM can still call browse_web if needed
+    }
+  }
+
+  if (snippets.length === 0) return text;
+
+  return `${text}\n\n---\nURL Context (auto-fetched):\n${snippets.join("\n\n---\n")}`;
 }
 
 /**
