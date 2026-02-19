@@ -1,11 +1,12 @@
 import type { Gateway } from "../core/gateway.js";
 import type { ActionType } from "../core/types.js";
-import { fsReadFile, fsListDir, fsWriteFile, fsDeleteFile, fsMoveFile } from "./filesystem.js";
+import { fsReadFile, fsListDir, fsWriteFile, fsDeleteFile, fsMoveFile, resolveSafePath } from "./filesystem.js";
 import { fetchUrl } from "./browser.js";
 import { execShell } from "./shell.js";
 import { applyPatch } from "./patch.js";
 import { memoryRead, memoryWrite, memoryList, memoryDelete } from "./memory.js";
 import { parseMcpLLMName } from "../mcp/manager.js";
+import { SecretGuard, checkShellCommand, redactEnvVars } from "../security/secret-guard.js";
 
 /**
  * Execute a tool action. Filesystem tools are real; others remain simulated stubs.
@@ -18,11 +19,36 @@ export async function executeToolAction(
   details: { description: string; target?: string; content?: string }
 ): Promise<string> {
   const workspaceDir = gw.config.workspaceDir;
+  const guard = new SecretGuard(gw.config.storageDir);
 
   try {
     switch (toolName) {
       case "filesystem": {
         const target = details.target || "";
+        // SecretGuard: check path before any filesystem operation
+        if (action === "read_file" || action === "write_file" || action === "delete_file") {
+          try {
+            const absPath = await resolveSafePath(workspaceDir, target);
+            const denied = guard.checkPath(absPath);
+            if (denied) return denied;
+          } catch {
+            // resolveSafePath may throw for invalid paths — let the actual op handle it
+          }
+        }
+        if (action === "move_file") {
+          try {
+            const absFrom = await resolveSafePath(workspaceDir, target);
+            const deniedFrom = guard.checkPath(absFrom);
+            if (deniedFrom) return deniedFrom;
+            if (details.content) {
+              const absTo = await resolveSafePath(workspaceDir, details.content);
+              const deniedTo = guard.checkPath(absTo);
+              if (deniedTo) return deniedTo;
+            }
+          } catch {
+            // let the actual op handle it
+          }
+        }
         switch (action) {
           case "read_file":
             return (await fsReadFile(workspaceDir, target)).result;
@@ -40,15 +66,27 @@ export async function executeToolAction(
         }
       }
 
-      case "browser":
-        return (await fetchUrl(details.target || details.description)).result;
+      case "browser": {
+        const url = details.target || details.description;
+        await gw.progressCallback?.(`🔍 Fetching: ${url}`);
+        return (await fetchUrl(url)).result;
+      }
 
       case "shell": {
         switch (action) {
-          case "exec_shell":
-            return await execShell(details.target || details.description, workspaceDir);
+          case "exec_shell": {
+            const cmd = details.target || details.description;
+            // SecretGuard: block commands that try to read protected files
+            const shellDenied = checkShellCommand(cmd);
+            if (shellDenied) return shellDenied;
+            await gw.progressCallback?.(`⚙️ Running: ${cmd}`);
+            const rawOutput = await execShell(cmd, workspaceDir);
+            return redactEnvVars(rawOutput);
+          }
           case "exec_shell_bg": {
-            const sessionId = gw.processRegistry.spawn(details.target || details.description, workspaceDir);
+            const bgCmd = details.target || details.description;
+            await gw.progressCallback?.(`⚙️ Starting background process: ${bgCmd}`);
+            const sessionId = gw.processRegistry.spawn(bgCmd, workspaceDir);
             return `Background process started.\nSession ID: ${sessionId}\n\nUse process_poll with session_id="${sessionId}" to check output.`;
           }
           case "process_poll":

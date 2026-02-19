@@ -91,6 +91,8 @@ export const SAFE_ACTIONS: ActionType[] = [
 
 export interface PermissionRequest {
   approvalId: string;
+  /** Groups multiple dangerous actions from a single LLM turn for batch confirm/deny. */
+  batchId?: string;
   toolName: ToolName;
   action: ActionType;
   details: {
@@ -156,6 +158,17 @@ export interface ParsedCommand {
   name: CommandName;
   args: string[];
   raw: string;
+}
+
+// ─── Infrastructure Context ───────────────────────────────────
+export interface InfraContext {
+  cpuCores: number;
+  loadAvg: number;
+  ramTotalGB: number;
+  ramFreeGB: number;
+  gpus: Array<{ name: string; vramTotalMB: number; vramFreeMB: number }>;
+  ollamaModels: Array<{ name: string; sizeGB: number }>;
+  probedAt: number;
 }
 
 // ─── Gateway Instance ─────────────────────────────────────────

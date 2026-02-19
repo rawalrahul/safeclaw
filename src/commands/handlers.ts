@@ -4,7 +4,7 @@ import { BUILTIN_TOOL_NAMES } from "../core/types.js";
 import { executeToolAction } from "../tools/executor.js";
 import { PROVIDER_NAMES, DEFAULT_MODELS } from "../providers/types.js";
 import type { ProviderName } from "../providers/types.js";
-import { continueAfterToolResult } from "../agent/runner.js";
+import { continueAfterToolResult, continueAfterBatchToolResults } from "../agent/runner.js";
 import { fetchModels } from "../providers/models.js";
 import { formatPromptSkills } from "../skills/prompt-skills.js";
 
@@ -346,37 +346,71 @@ async function handleConfirm(
   gw: Gateway,
   args: string[]
 ): Promise<{ reply: string }> {
-  const approvalId = args[0];
-  if (!approvalId) {
-    const pending = gw.approvals.listPending();
-    if (pending.length === 0) return { reply: "No pending approvals." };
-    return {
-      reply: "Pending approvals:\n" +
-        pending.map((p) => `  ${p.approvalId}: ${p.details.description}`).join("\n") +
-        "\n\nUsage: /confirm <id>",
-    };
+  const first = args[0];
+
+  // /confirm  →  show all pending
+  if (!first) {
+    return { reply: gw.approvals.formatAllPending() };
   }
 
-  const req = gw.approvals.approve(approvalId);
-  if (!req) return { reply: `No pending approval with ID: ${approvalId}` };
+  // /confirm all <batchId>  →  approve entire batch
+  if (first === "all") {
+    const batchId = args[1];
+    if (!batchId) return { reply: "Usage: /confirm all <batchId>" };
+
+    const batch = gw.approvals.approveBatch(batchId);
+    if (batch.length === 0) {
+      return { reply: `No pending approvals found for batch "${batchId}".` };
+    }
+
+    const results: string[] = [];
+    for (const req of batch) {
+      await gw.audit.log("permission_approved", {
+        approvalId: req.approvalId,
+        tool: req.toolName,
+        action: req.action,
+      });
+      const result = await executeToolAction(gw, req.toolName, req.action, req.details);
+      await gw.audit.log("action_executed", {
+        approvalId: req.approvalId,
+        tool: req.toolName,
+        action: req.action,
+      });
+      results.push(result);
+    }
+
+    gw.state = "awake";
+
+    const llmReply = await continueAfterBatchToolResults(gw, batch, results);
+    if (llmReply) {
+      return { reply: `Approved all (${batch.length} actions).\n\n${llmReply}` };
+    }
+
+    const summary = batch
+      .map((r, i) => `${r.details.description}: ${results[i]}`)
+      .join("\n");
+    return { reply: `Approved all (${batch.length} actions).\n\n${summary}` };
+  }
+
+  // /confirm <id>  →  approve single action
+  const req = gw.approvals.approve(first);
+  if (!req) return { reply: `No pending approval with ID: ${first}` };
 
   await gw.audit.log("permission_approved", {
-    approvalId,
+    approvalId: first,
     tool: req.toolName,
     action: req.action,
   });
 
-  // Execute the real action
   const result = await executeToolAction(gw, req.toolName, req.action, req.details);
   await gw.audit.log("action_executed", {
-    approvalId,
+    approvalId: first,
     tool: req.toolName,
     action: req.action,
   });
 
-  gw.state = "awake"; // back from action_pending
+  gw.state = "awake";
 
-  // If we have an active LLM conversation, feed the tool result back
   const llmReply = await continueAfterToolResult(gw, req, result);
   if (llmReply) {
     return { reply: `Approved.\n\n${llmReply}` };
@@ -389,19 +423,46 @@ async function handleDeny(
   gw: Gateway,
   args: string[]
 ): Promise<{ reply: string }> {
-  const approvalId = args[0];
-  if (!approvalId) return { reply: "Usage: /deny <id>" };
+  const first = args[0];
 
-  const req = gw.approvals.deny(approvalId);
-  if (!req) return { reply: `No pending approval with ID: ${approvalId}` };
+  // /deny  →  show pending
+  if (!first) {
+    return { reply: gw.approvals.formatAllPending() };
+  }
+
+  // /deny all <batchId>  →  deny entire batch
+  if (first === "all") {
+    const batchId = args[1];
+    if (!batchId) return { reply: "Usage: /deny all <batchId>" };
+
+    const batch = gw.approvals.denyBatch(batchId);
+    if (batch.length === 0) {
+      return { reply: `No pending approvals found for batch "${batchId}".` };
+    }
+
+    for (const req of batch) {
+      await gw.audit.log("permission_denied", {
+        approvalId: req.approvalId,
+        tool: req.toolName,
+        action: req.action,
+      });
+    }
+
+    gw.state = "awake";
+    return { reply: `Denied all ${batch.length} action(s) in batch.` };
+  }
+
+  // /deny <id>  →  deny single action
+  const req = gw.approvals.deny(first);
+  if (!req) return { reply: `No pending approval with ID: ${first}` };
 
   await gw.audit.log("permission_denied", {
-    approvalId,
+    approvalId: first,
     tool: req.toolName,
     action: req.action,
   });
 
-  gw.state = "awake"; // back from action_pending
+  gw.state = "awake";
   return { reply: `Denied. Action "${req.details.description}" was not executed.` };
 }
 
@@ -448,8 +509,11 @@ Tools:
   /disable skill__<name> — Disable a dynamically created skill
 
 Permissions:
-  /confirm <id> — Approve a pending action
+  /confirm — Show all pending approvals
+  /confirm <id> — Approve a single pending action
+  /confirm all <batchId> — Approve all actions in a batch at once
   /deny <id> — Reject a pending action
+  /deny all <batchId> — Reject all actions in a batch at once
 
 Info:
   /status — Show gateway state

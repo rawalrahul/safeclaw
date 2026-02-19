@@ -76,8 +76,18 @@ export function registerHandler(
     entry.timer = setTimeout(async () => {
       debounceMap.delete(chatId);
       const combined = entry.lines.join("\n");
-      const response = await handleFreeText(gw, combined);
-      await sendMessage(bot, chatId, response);
+
+      // Wire up live progress messages for the duration of this agent run
+      gw.progressCallback = async (msg: string) => {
+        await sendMessage(bot, chatId, msg);
+      };
+
+      try {
+        const response = await handleFreeText(gw, combined);
+        await sendMessage(bot, chatId, response);
+      } finally {
+        gw.progressCallback = null;
+      }
     }, DEBOUNCE_MS);
   });
 }

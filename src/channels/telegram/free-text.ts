@@ -2,6 +2,7 @@ import type { Gateway } from "../../core/gateway.js";
 import type { ToolName, ActionType } from "../../core/types.js";
 import { SAFE_ACTIONS } from "../../core/types.js";
 import { runAgent } from "../../agent/runner.js";
+import { runOrchestrated, isComplexTask } from "../../agents/orchestrator.js";
 import { executeToolAction } from "../../tools/executor.js";
 import { fetchUrl } from "../../tools/browser.js";
 
@@ -22,7 +23,13 @@ export async function handleFreeText(
   // If LLM provider is configured, use the agent
   if (gw.providerStore.getActiveProvider()) {
     const enrichedText = await enrichWithUrls(gw, text);
-    const result = await runAgent(gw, enrichedText);
+
+    // Route complex multi-step tasks to the orchestrated multi-agent path
+    const useOrchestrated = isComplexTask(text) && !looksLikeKeywordCommand(text);
+    const result = useOrchestrated
+      ? await runOrchestrated(gw, enrichedText)
+      : await runAgent(gw, enrichedText);
+
     if (looksLikeKeywordCommand(text) && shouldFallbackToKeyword(result)) {
       return keywordFallback(gw, text);
     }

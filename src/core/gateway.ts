@@ -1,4 +1,4 @@
-import type { GatewayState, GatewaySession, SafeClawConfig } from "./types.js";
+import type { GatewayState, GatewaySession, SafeClawConfig, InfraContext } from "./types.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { ApprovalStore } from "../permissions/store.js";
 import { AuditLogger } from "../audit/logger.js";
@@ -14,6 +14,7 @@ import { ProcessRegistry } from "../tools/process-registry.js";
 import { closeBrowser } from "../tools/browser.js";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { probeInfra } from "../infra/probe.js";
 
 export class Gateway {
   state: GatewayState = "dormant";
@@ -32,6 +33,14 @@ export class Gateway {
   soulPrompt: string | null = null;
   /** Prompt-only skills loaded from ~/.safeclaw/prompt-skills/*.md on wake. */
   promptSkills: PromptSkill[] = [];
+  /** Probed system resources (CPU, RAM, GPU, Ollama models). Populated on wake. */
+  infraContext: InfraContext | null = null;
+  /**
+   * Optional live-progress callback. Set by the Telegram handler before an agent run
+   * so that tool execution can stream status messages (e.g. "Fetching https://...").
+   * Cleared after each agent run.
+   */
+  progressCallback: ((msg: string) => Promise<void>) | null = null;
 
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private onAutoSleep?: () => void;
@@ -78,6 +87,9 @@ export class Gateway {
     // Load soul file and prompt skills in background (non-blocking)
     void this.loadPersonality();
 
+    // Probe system resources in background — fills gw.infraContext
+    void this.probeSystemResources();
+
     // Fire-and-forget: MCP discovery runs in background so slow/unreachable
     // servers don't block the bot. Tools appear in /tools once discovery finishes.
     void this.connectMcpServers();
@@ -112,6 +124,20 @@ export class Gateway {
     }
   }
 
+  private async probeSystemResources(): Promise<void> {
+    try {
+      this.infraContext = await probeInfra();
+      console.log(
+        `[infra] CPU: ${this.infraContext.cpuCores} cores, ` +
+        `RAM: ${this.infraContext.ramFreeGB.toFixed(1)}/${this.infraContext.ramTotalGB.toFixed(1)} GB free, ` +
+        `GPUs: ${this.infraContext.gpus.length}, ` +
+        `Ollama models: ${this.infraContext.ollamaModels.length}`
+      );
+    } catch {
+      // Probe failure is non-critical
+    }
+  }
+
   private async connectMcpServers(): Promise<void> {
     const servers = readMcpServersConfig();
     const names = Object.keys(servers);
@@ -136,6 +162,7 @@ export class Gateway {
     this.conversation = null;
     this.soulPrompt = null;
     this.promptSkills = [];
+    this.infraContext = null;
     this.tools.disableAll();
     this.tools.clearMcp();
     this.approvals.cleanupExpired();
@@ -153,6 +180,7 @@ export class Gateway {
     this.conversation = null;
     this.soulPrompt = null;
     this.promptSkills = [];
+    this.infraContext = null;
     this.tools.disableAll();
     this.tools.clearMcp();
     this.processRegistry.dispose();
@@ -168,6 +196,7 @@ export class Gateway {
     this.conversation = null;
     this.soulPrompt = null;
     this.promptSkills = [];
+    this.infraContext = null;
     this.tools.disableAll();
     this.tools.clearMcp();
     this.processRegistry.dispose();
@@ -228,6 +257,18 @@ export class Gateway {
     const pending = this.approvals.listPending();
     if (pending.length > 0) {
       lines.push(`Pending approvals: ${pending.length}`);
+    }
+
+    if (this.infraContext) {
+      const ic = this.infraContext;
+      lines.push(`CPU: ${ic.cpuCores} cores`);
+      lines.push(`RAM: ${ic.ramFreeGB.toFixed(1)}/${ic.ramTotalGB.toFixed(1)} GB free`);
+      if (ic.gpus.length > 0) {
+        lines.push(`GPU: ${ic.gpus.map((g) => g.name).join(", ")}`);
+      }
+      if (ic.ollamaModels.length > 0) {
+        lines.push(`Ollama: ${ic.ollamaModels.map((m) => m.name).join(", ")}`);
+      }
     }
 
     return lines.join("\n");

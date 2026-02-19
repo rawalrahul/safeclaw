@@ -56,6 +56,13 @@ export function trimHistory(session: ConversationSession): void {
   if (session.messages.length > MAX_HISTORY) {
     session.messages = session.messages.slice(-MAX_HISTORY);
   }
+
+  // Repair orphaned tool_result messages at the head of history.
+  // After slicing, the first message(s) may be tool_results with no preceding
+  // assistant turn that has toolCalls — this causes API errors on all providers.
+  while (session.messages.length > 0 && session.messages[0].role === "tool_result") {
+    session.messages.shift();
+  }
 }
 
 /**

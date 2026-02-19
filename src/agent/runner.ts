@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Gateway } from "../core/gateway.js";
 import type { PermissionRequest, ActionType } from "../core/types.js";
 import { SAFE_ACTIONS } from "../core/types.js";
@@ -11,6 +12,7 @@ import {
 import { addUserMessage, addAssistantMessage, addToolResult, trimHistory, estimateTokens } from "./session.js";
 import { executeToolAction } from "../tools/executor.js";
 import { getMemoryContext } from "../tools/memory.js";
+import { createSkillWithReview } from "../agents/skill-creator.js";
 import type { LLMMessage, LLMToolSchema } from "../providers/types.js";
 
 const BASE_SYSTEM_PROMPT = `You are SafeClaw, a secure personal AI assistant running as a Telegram bot. You help the owner with tasks using the tools available to you.
@@ -82,6 +84,12 @@ function tryParseInlineToolCall(
   let candidate = text.trim();
   if (!candidate) return null;
 
+  // Handle <tool_call>...</tool_call> XML tags (qwen2.5-coder and similar models)
+  const xmlMatch = candidate.match(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i);
+  if (xmlMatch) {
+    candidate = xmlMatch[1].trim();
+  }
+
   if (candidate.startsWith("```")) {
     const firstNewline = candidate.indexOf("\n");
     const lastFence = candidate.lastIndexOf("```");
@@ -90,10 +98,26 @@ function tryParseInlineToolCall(
     }
   }
 
+  // Scan for first `{` or `[` to handle text before/after the JSON block
   const firstBrace = candidate.indexOf("{");
-  const lastBrace = candidate.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    candidate = candidate.slice(firstBrace, lastBrace + 1).trim();
+  const firstBracket = candidate.indexOf("[");
+  let jsonStart = -1;
+  if (firstBrace !== -1 && firstBracket !== -1) {
+    jsonStart = Math.min(firstBrace, firstBracket);
+  } else if (firstBrace !== -1) {
+    jsonStart = firstBrace;
+  } else if (firstBracket !== -1) {
+    jsonStart = firstBracket;
+  }
+
+  if (jsonStart !== -1) {
+    // Find matching close
+    const openChar = candidate[jsonStart];
+    const closeChar = openChar === "{" ? "}" : "]";
+    const lastClose = candidate.lastIndexOf(closeChar);
+    if (lastClose > jsonStart) {
+      candidate = candidate.slice(jsonStart, lastClose + 1).trim();
+    }
   }
 
   let parsed: unknown;
@@ -281,6 +305,14 @@ async function handleToolCalls(
   // assistant turn; Gemini needs a functionCall part before the functionResponse.
   addAssistantMessage(gw.conversation, response.text, response.toolCalls);
 
+  // Track whether any safe tools were executed so we can do ONE follow-up LLM call.
+  let executedSafeTools = false;
+  let lastSafeResult = "";
+
+  // All dangerous actions from this LLM turn share a batchId for batch confirm/deny.
+  const batchId = randomUUID().slice(0, 8);
+  const dangerousRequests: PermissionRequest[] = [];
+
   for (const tc of response.toolCalls) {
     // ── Meta-tool: request_capability ────────────────────────
     if (tc.name === "request_capability") {
@@ -319,39 +351,19 @@ async function handleToolCalls(
       const result = guardToolResult(rawResult);
       await gw.audit.log("tool_result", { tool: toolName, action, result: result.slice(0, 500) });
       addToolResult(gw.conversation, tc.id, tc.name, result);
-
-      // Continue the conversation to let LLM process the result
-      const messages: LLMMessage[] = [
-        { role: "system" as const, content: systemPrompt },
-        ...gw.conversation.messages,
-      ];
-
-      try {
-        let followUp = await provider.chat(messages, toolSchemas, model);
-
-        if (followUp.toolCalls.length === 0 && followUp.text) {
-          const inline = tryParseInlineToolCall(followUp.text, toolSchemas);
-          if (inline) followUp = inline;
-        }
-
-        if (followUp.toolCalls.length > 0) {
-          return await handleToolCalls(gw, followUp, toolSchemas, model, systemPrompt);
-        }
-
-        const text = followUp.text || result;
-        addAssistantMessage(gw.conversation, text);
-        return text;
-      } catch {
-        return result;
-      }
+      executedSafeTools = true;
+      lastSafeResult = result;
+      // Do NOT call LLM here — collect ALL safe results first, then do one follow-up
+      continue;
     }
 
-    // Dangerous action → create approval request
+    // Dangerous action → create approval request (grouped under batchId)
     const req = gw.approvals.create(
       toolName,
       action as ActionType,
       details.description,
-      { target: details.target, content: details.content }
+      { target: details.target, content: details.content },
+      batchId
     );
     gw.state = "action_pending";
 
@@ -364,12 +376,47 @@ async function handleToolCalls(
 
     await gw.audit.log("permission_requested", {
       approvalId: req.approvalId,
+      batchId,
       tool: toolName,
       action,
       target: details.target,
     });
 
-    parts.push(gw.approvals.formatPendingRequest(req));
+    dangerousRequests.push(req);
+  }
+
+  // Format dangerous actions — batch format if >1, individual if exactly 1
+  if (dangerousRequests.length === 1) {
+    parts.push(gw.approvals.formatPendingRequest(dangerousRequests[0]));
+  } else if (dangerousRequests.length > 1) {
+    parts.push(gw.approvals.formatBatchRequest(dangerousRequests, batchId));
+  }
+
+  // After processing all tool calls: if any safe tools ran, do ONE LLM follow-up
+  if (executedSafeTools) {
+    const messages: LLMMessage[] = [
+      { role: "system" as const, content: systemPrompt },
+      ...gw.conversation.messages,
+    ];
+
+    try {
+      let followUp = await provider.chat(messages, toolSchemas, model);
+
+      if (followUp.toolCalls.length === 0 && followUp.text) {
+        const inline = tryParseInlineToolCall(followUp.text, toolSchemas);
+        if (inline) followUp = inline;
+      }
+
+      if (followUp.toolCalls.length > 0) {
+        return await handleToolCalls(gw, followUp, toolSchemas, model, systemPrompt);
+      }
+
+      const text = followUp.text || lastSafeResult;
+      addAssistantMessage(gw.conversation, text);
+      return text;
+    } catch {
+      return lastSafeResult;
+    }
   }
 
   return parts.join("\n\n");
@@ -426,8 +473,69 @@ export async function continueAfterToolResult(
   }
 }
 
+/**
+ * After /confirm all, feed all tool results back to the LLM for a single continuation.
+ */
+export async function continueAfterBatchToolResults(
+  gw: Gateway,
+  reqs: PermissionRequest[],
+  results: string[]
+): Promise<string | null> {
+  if (!gw.conversation) return null;
+
+  // Feed every tool result into conversation history
+  for (let i = 0; i < reqs.length; i++) {
+    const req = reqs[i];
+    const result = results[i] ?? "Error: no result";
+    const pending = gw.conversation.pendingToolCalls.get(req.approvalId);
+    if (!pending) continue;
+    gw.conversation.pendingToolCalls.delete(req.approvalId);
+    const guardedResult = guardToolResult(result);
+    addToolResult(gw.conversation, pending.toolCallId, pending.toolName, guardedResult);
+  }
+
+  const resolved = resolveProvider(gw.providerStore);
+  if (!resolved) return null;
+
+  const { provider, model } = resolved;
+  const enabledTools = gw.tools.getEnabled();
+  const toolSchemas = [REQUEST_CAPABILITY_SCHEMA, ...buildToolSchemas(enabledTools)];
+  const systemPrompt = await buildSystemPrompt(gw);
+
+  const messages: LLMMessage[] = [
+    { role: "system" as const, content: systemPrompt },
+    ...gw.conversation.messages,
+  ];
+
+  try {
+    let response = await provider.chat(messages, toolSchemas, model);
+
+    if (response.toolCalls.length === 0 && response.text) {
+      const inline = tryParseInlineToolCall(response.text, toolSchemas);
+      if (inline) response = inline;
+    }
+
+    if (response.toolCalls.length > 0) {
+      return await handleToolCalls(gw, response, toolSchemas, model, systemPrompt);
+    }
+
+    const text = response.text || results[results.length - 1] || "";
+    addAssistantMessage(gw.conversation, text);
+    return text;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Capability Request Handler ───────────────────────────────
 
+/**
+ * Handles a request_capability tool call from the LLM.
+ *
+ * Instead of using the main LLM's inline code proposal, a dedicated SkillCreator
+ * sub-agent writes the code and a Reviewer validates it for security issues.
+ * Up to 2 revision attempts before presenting the draft to the owner for /confirm.
+ */
 async function handleCapabilityRequest(
   gw: Gateway,
   tc: { id: string; name: string; input: Record<string, unknown> }
@@ -447,10 +555,9 @@ async function handleCapabilityRequest(
   const skillDesc = input.skill_description ?? "No description provided";
   const reason = input.reason ?? "Not specified";
   const dangerous = input.dangerous ?? true;
-  const code = input.implementation_code ?? "";
 
-  if (!skillName || !code) {
-    const errMsg = "Skill proposal is missing skill_name or implementation_code.";
+  if (!skillName) {
+    const errMsg = "Skill proposal is missing skill_name.";
     addToolResult(gw.conversation, tc.id, "request_capability", errMsg);
     return errMsg;
   }
@@ -461,11 +568,29 @@ async function handleCapabilityRequest(
     return msg;
   }
 
+  // Notify user that SkillCreator is working
+  addToolResult(gw.conversation, tc.id, "request_capability", `Generating skill "${skillName}" with SkillCreator agent...`);
+
+  // Spawn SkillCreator agent to write and review the skill
+  const { proposal, reviewWarning } = await createSkillWithReview(gw, {
+    skillName,
+    skillDescription: skillDesc,
+    reason,
+    dangerous,
+  });
+
+  // If SkillCreator produced nothing (no provider), fall back to inline code if provided
+  const finalCode = proposal.code || (input.implementation_code as string | undefined) || "";
+
+  if (!finalCode) {
+    return `SkillCreator could not generate code for "${skillName}". No LLM provider available.`;
+  }
+
   const req = gw.approvals.create(
     "skill_forge",
     "skill_install",
     `Install new skill: ${skillName} — ${skillDesc}`,
-    { target: skillName, content: code }
+    { target: skillName, content: finalCode }
   );
 
   gw.state = "action_pending";
@@ -474,7 +599,7 @@ async function handleCapabilityRequest(
     approvalId: req.approvalId,
     toolCallId: tc.id,
     toolName: "request_capability",
-    input: tc.input,
+    input: { ...tc.input, implementation_code: finalCode },
   });
 
   await gw.audit.log("skill_proposed", {
@@ -485,7 +610,7 @@ async function handleCapabilityRequest(
   });
 
   const timeLeft = Math.round((req.expiresAt - Date.now()) / 1000);
-  const codePreview = code.length > 600 ? code.slice(0, 600) + "\n... (truncated)" : code;
+  const codePreview = finalCode.length > 600 ? finalCode.slice(0, 600) + "\n... (truncated)" : finalCode;
   const dangerNote = dangerous
     ? "⚠️  This skill performs potentially dangerous operations (file writes, network calls, etc.)."
     : "ℹ️  This skill is read-only / safe.";
@@ -497,8 +622,9 @@ async function handleCapabilityRequest(
     `Needed for: ${reason}`,
     ``,
     dangerNote,
+    ...(reviewWarning ? [``, reviewWarning] : [``, `✅ Security reviewer approved this code.`]),
     ``,
-    `Proposed code:`,
+    `Generated code:`,
     "```",
     codePreview,
     "```",
