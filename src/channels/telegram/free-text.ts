@@ -19,14 +19,14 @@ export async function handleFreeText(
   gw: Gateway,
   text: string
 ): Promise<string> {
-  if (looksLikeKeywordCommand(text)) {
-    return keywordFallback(gw, text);
-  }
-
   // If LLM provider is configured, use the agent
   if (gw.providerStore.getActiveProvider()) {
     const enrichedText = await enrichWithUrls(gw, text);
-    return runAgent(gw, enrichedText);
+    const result = await runAgent(gw, enrichedText);
+    if (looksLikeKeywordCommand(text) && shouldFallbackToKeyword(result)) {
+      return keywordFallback(gw, text);
+    }
+    return result;
   }
 
   // ─── Keyword fallback (no LLM configured) ──────────────
@@ -41,6 +41,10 @@ function looksLikeKeywordCommand(text: string): boolean {
     lower.startsWith("list ") ||
     lower.startsWith("ls ") ||
     lower.startsWith("dir ") ||
+    lower.startsWith("search ") ||
+    lower.startsWith("browse ") ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
     lower.startsWith("write ") ||
     lower.startsWith("save ") ||
     lower.startsWith("move ") ||
@@ -48,6 +52,16 @@ function looksLikeKeywordCommand(text: string): boolean {
     lower.startsWith("delete ") ||
     lower.startsWith("del ") ||
     lower.startsWith("rm ")
+  );
+}
+
+function shouldFallbackToKeyword(llmText: string): boolean {
+  const text = llmText.toLowerCase();
+  return (
+    text.includes("\"request_capability\"") ||
+    text.includes("skill proposal") ||
+    text.includes("\"skill_name\"") ||
+    text.includes("\"implementation_code\"")
   );
 }
 
