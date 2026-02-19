@@ -54,24 +54,34 @@ export async function closeBrowser(): Promise<void> {
  * Fetch a URL and return clean readable text.
  * Tries Playwright (headless Chromium, full JS) first.
  * Falls back to fetch + @mozilla/readability if Playwright is unavailable.
- * Plain search queries are routed through DuckDuckGo.
+ * Plain search queries are routed through DuckDuckGo Lite (simpler HTML, more reliable scraping).
  */
 export async function fetchUrl(query: string): Promise<{
   action: ActionType;
   description: string;
   result: string;
 }> {
-  const url = /^https?:\/\//i.test(query)
-    ? query
-    : `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const isUrl = /^https?:\/\//i.test(query);
+  const isSearch = !isUrl;
 
-  const browser = await getBrowser();
-  if (browser) {
-    const result = await fetchWithPlaywright(browser, url);
-    if (result) return result;
+  if (isSearch) {
+    // For searches, try DuckDuckGo Lite first (simpler HTML, no JS required)
+    const browser = await getBrowser();
+    const ddgLiteUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+    if (browser) {
+      const result = await fetchWithPlaywright(browser, ddgLiteUrl);
+      if (result) return result;
+    }
+    return fetchSearchFallback(query, ddgLiteUrl);
   }
 
-  return fetchWithFetch(url);
+  // For explicit URLs, use Playwright if available, otherwise plain fetch
+  const browser = await getBrowser();
+  if (browser) {
+    const result = await fetchWithPlaywright(browser, query);
+    if (result) return result;
+  }
+  return fetchWithFetch(query);
 }
 
 // ── Playwright path ───────────────────────────────────────────────────────────
@@ -134,6 +144,95 @@ async function fetchWithPlaywright(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     try { await (context as any)?.close(); } catch { /* ignore */ }
   }
+}
+
+// ── Search fallback (DuckDuckGo Lite parser) ─────────────────────────────────
+
+/**
+ * Fetch DuckDuckGo Lite and extract structured search results.
+ * DDG Lite returns a simple HTML table — no JS needed, no Readability required.
+ */
+async function fetchSearchFallback(
+  query: string,
+  ddgLiteUrl: string
+): Promise<{ action: ActionType; description: string; result: string }> {
+  let rawHtml: string;
+
+  try {
+    const res = await fetch(ddgLiteUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,*/*;q=0.9",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      redirect: "follow",
+    });
+
+    if (!res.ok) {
+      return {
+        action: "browse_web",
+        description: `Search: ${query}`,
+        result: `Search failed: HTTP ${res.status} from DuckDuckGo`,
+      };
+    }
+    rawHtml = await res.text();
+  } catch (err) {
+    return {
+      action: "browse_web",
+      description: `Search: ${query}`,
+      result: `Search error: ${(err as Error).message}`,
+    };
+  }
+
+  // DuckDuckGo Lite structure:
+  // <a class="result-link" href="...">Title</a>
+  // <td class="result-snippet">Snippet text...</td>
+  // <span class="link-text">domain.com</span>
+  const results: string[] = [`Search results for: ${query}\n`];
+
+  const linkRe = /<a[^>]*class="result-link"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+  const snippetRe = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
+
+  const links: Array<{ url: string; title: string }> = [];
+  const snippets: string[] = [];
+
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(rawHtml)) !== null) {
+    const href = m[1].replace(/&amp;/g, "&");
+    const title = m[2].replace(/<[^>]+>/g, "").trim();
+    if (href && title) links.push({ url: href, title });
+  }
+  while ((m = snippetRe.exec(rawHtml)) !== null) {
+    const text = m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+    if (text) snippets.push(text);
+  }
+
+  const count = Math.max(links.length, snippets.length);
+
+  if (count === 0) {
+    // DDG Lite parse failed — fall back to generic fetch+Readability
+    return fetchWithFetch(ddgLiteUrl);
+  }
+
+  for (let i = 0; i < Math.min(count, 8); i++) {
+    const link = links[i];
+    const snippet = snippets[i] ?? "";
+    if (link) {
+      results.push(`${i + 1}. ${link.title}\n   ${link.url}\n   ${snippet}`);
+    } else if (snippet) {
+      results.push(`${i + 1}. ${snippet}`);
+    }
+  }
+
+  const text = results.join("\n\n");
+  return {
+    action: "browse_web",
+    description: `Search: ${query}`,
+    result: text.length > MAX_CONTENT_LENGTH ? text.slice(0, MAX_CONTENT_LENGTH) + "\n\n[... truncated]" : text,
+  };
 }
 
 // ── Fetch fallback ────────────────────────────────────────────────────────────

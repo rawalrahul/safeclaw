@@ -17,7 +17,11 @@
       "Bash(powershell -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\91982\\\\Downloads\\\\safeclaw\\\\extract.ps1\")",
       "Bash(node:*)",
       "Bash(cmd /c \"npm install playwright 2>&1\")",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(cmd /c \"dir C:\\\\Users\\\\91982\\\\Downloads\\\\safeclaw /b /a-d\")",
+      "Bash(cmd /c \"dir C:\\\\Users\\\\91982\\\\Downloads\\\\safeclaw /b\")",
+      "Bash(cmd /c \"dir /b C:\\\\Users\\\\91982\\\\Downloads\\\\safeclaw\")",
+      "Bash(powershell -Command:*)"
     ]
   }
 }

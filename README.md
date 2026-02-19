@@ -62,6 +62,27 @@ npm install
 
 ## Step 4 — Configure
 
+SafeClaw reads Telegram credentials from **`~/.safeclaw/telegram.json`** (recommended — outside the project directory, protected by SecretGuard). On first run it can also read them from `.env` and auto-migrates them.
+
+### Option A — Recommended: create `~/.safeclaw/telegram.json`
+
+```bash
+mkdir -p ~/.safeclaw
+```
+
+Create `~/.safeclaw/telegram.json`:
+
+```json
+{
+  "botToken": "7412345678:AAFz...",
+  "ownerTelegramId": 123456789
+}
+```
+
+Then start SafeClaw. No `.env` needed for the token — it loads directly from there on every start.
+
+### Option B — First-run via `.env` (auto-migrates)
+
 ```bash
 cp .env.example .env
 ```
@@ -71,11 +92,25 @@ Edit `.env`:
 ```env
 TELEGRAM_BOT_TOKEN=7412345678:AAFz...       # from BotFather
 OWNER_TELEGRAM_ID=123456789                 # your numeric Telegram ID
-INACTIVITY_TIMEOUT_MINUTES=30               # optional, default 30
-WORKSPACE_DIR=/home/you/safeclaw-workspace  # optional, default ~/safeclaw-workspace
 ```
 
-> `WORKSPACE_DIR` is the only directory SafeClaw's filesystem tool can read or write. Paths that try to escape it (e.g. `../../etc/passwd`) are rejected. `.env` files and `~/.safeclaw/*.json` are additionally blocked by SecretGuard even inside the workspace.
+On first start, SafeClaw **automatically** saves these to `~/.safeclaw/telegram.json` and prints:
+
+```
+[config] Telegram credentials saved to ~/.safeclaw/telegram.json
+[config] You can now remove TELEGRAM_BOT_TOKEN and OWNER_TELEGRAM_ID from .env
+```
+
+After that, clear the token from `.env` — future starts load from `telegram.json`.
+
+### Optional tunables (`.env` only)
+
+```env
+INACTIVITY_TIMEOUT_MINUTES=30               # default 30
+WORKSPACE_DIR=/home/you/safeclaw-workspace  # default ~/safeclaw-workspace
+```
+
+> `WORKSPACE_DIR` is the only directory SafeClaw's filesystem tool can read or write. Paths that try to escape it (e.g. `../../etc/passwd`) are rejected. `.env` files and all `~/.safeclaw/*.json` files (including `telegram.json`) are blocked by SecretGuard — the LLM can never read them.
 
 ---
 
@@ -96,14 +131,21 @@ You should see:
 │   SafeClaw — Secure AI Assistant     │
 │   Sleep-by-default. You hold the keys│
 └─────────────────────────────────────┘
+[config] Owner Telegram ID: 123456789
+[config] Storage: /home/you/.safeclaw
+[config] Inactivity timeout: 30min
 [telegram] Bot online: @YourBotName
 [telegram] Send /wake from your Telegram to activate
+
 Security status:
   ✓ Gateway: DORMANT (ignoring all messages except /wake)
   ✓ Tools: ALL DISABLED
   ✓ Authentication: single-owner (Telegram ID)
   ✓ Owner: 123456789
 ```
+
+> On first run with `.env` credentials, you'll also see a one-time migration line before the telegram line:
+> `[config] Telegram credentials saved to ~/.safeclaw/telegram.json`
 
 ---
 
@@ -291,6 +333,9 @@ Bot:  Approved. Done! I've written hn_fetch.py ...
 |---------|-------------|
 | `/status` | Gateway state, uptime, idle time, enabled tools, hardware info |
 | `/audit [n]` | Last N audit log events (default 10) |
+| `/audit verbose` | Toggle verbose mode (live 💭 thinking + 🔧 tool messages during agent runs) |
+| `/audit verbose on` | Enable verbose mode |
+| `/audit verbose off` | Disable verbose mode |
 | `/skills` | Prompt skills status and active count |
 | `/help` | All commands inline in Telegram |
 
@@ -622,7 +667,8 @@ safeclaw/
 │   │   ├── gateway.ts            # State machine (dormant/awake/action_pending/shutdown)
 │   │   │                         #   probes infra + connects MCP on wake
 │   │   ├── auth.ts               # Single-owner Telegram ID check
-│   │   └── config.ts             # .env loader and config validation
+│   │   └── config.ts             # Loads credentials from ~/.safeclaw/telegram.json (primary)
+│                             #   or .env (first-run fallback, auto-migrates)
 │   │
 │   ├── channels/telegram/
 │   │   ├── client.ts             # grammy bot setup
@@ -704,7 +750,8 @@ safeclaw/
 
 ```
 ~/.safeclaw/
-├── auth.json                     # Stored API keys (owner-only file permissions)
+├── telegram.json                 # Bot token + owner ID (created on first run — keep private)
+├── auth.json                     # LLM API keys for Anthropic/OpenAI/Gemini/Ollama
 ├── audit.jsonl                   # Append-only audit log
 ├── soul.md                       # Optional custom persona (injected on wake)
 ├── memories/                     # Persistent agent memory (key-value store)
@@ -716,6 +763,8 @@ safeclaw/
     ├── pdf_create.mjs
     └── ...
 ```
+
+> All `*.json` files in `~/.safeclaw/` are blocked by SecretGuard — the LLM cannot read `telegram.json` or `auth.json` even if asked.
 
 ---
 
@@ -751,6 +800,8 @@ safeclaw/
 | **Infrastructure probe — CPU/RAM/GPU/Ollama on wake** | ✅ |
 | **Multi-agent orchestration — manager/worker/reviewer pipeline** | ✅ |
 | **SkillCreator agent — dedicated skill writing + security review** | ✅ |
+| **Verbose audit — live 💭/🔧/✅ messages during agent runs** | ✅ |
+| **Telegram credentials in `~/.safeclaw/telegram.json` (out of project dir)** | ✅ |
 
 ---
 
@@ -792,7 +843,9 @@ safeclaw/
 - [x] Auto-compaction of conversation history
 - [x] Background process execution with poll/write/kill
 - [x] Persistent memory across sessions
-- [x] SecretGuard — LLM can never read API keys or `.env` files
+- [x] SecretGuard — LLM can never read API keys, `.env` files, or `telegram.json`
+- [x] Telegram credentials stored in `~/.safeclaw/telegram.json` (auto-migrated from `.env`)
+- [x] Verbose audit mode — `/audit verbose` streams live LLM thinking + tool events
 - [x] Infrastructure probe — hardware-aware orchestration
 - [x] Multi-agent orchestration — manager/worker/reviewer pipeline
 - [ ] HTTP/SSE MCP server support
