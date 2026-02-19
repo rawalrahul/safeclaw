@@ -1,6 +1,6 @@
 import type { Gateway } from "../core/gateway.js";
 import type { ActionType } from "../core/types.js";
-import { fsReadFile, fsListDir, fsWriteFile, fsDeleteFile } from "./filesystem.js";
+import { fsReadFile, fsListDir, fsWriteFile, fsDeleteFile, fsMoveFile } from "./filesystem.js";
 import { fetchUrl } from "./browser.js";
 import { execShell } from "./shell.js";
 import { applyPatch } from "./patch.js";
@@ -32,6 +32,9 @@ export async function executeToolAction(
             return (await fsWriteFile(workspaceDir, target, details.content || "")).result;
           case "delete_file":
             return (await fsDeleteFile(workspaceDir, target)).result;
+          case "move_file":
+            if (!details.content) return "Error: move_file requires a destination path.";
+            return (await fsMoveFile(workspaceDir, target, details.content)).result;
           default:
             return `Unknown filesystem action: ${action}`;
         }

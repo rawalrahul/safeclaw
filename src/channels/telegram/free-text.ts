@@ -19,6 +19,10 @@ export async function handleFreeText(
   gw: Gateway,
   text: string
 ): Promise<string> {
+  if (looksLikeKeywordCommand(text)) {
+    return keywordFallback(gw, text);
+  }
+
   // If LLM provider is configured, use the agent
   if (gw.providerStore.getActiveProvider()) {
     const enrichedText = await enrichWithUrls(gw, text);
@@ -27,6 +31,24 @@ export async function handleFreeText(
 
   // ─── Keyword fallback (no LLM configured) ──────────────
   return keywordFallback(gw, text);
+}
+
+function looksLikeKeywordCommand(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  return (
+    lower.startsWith("read ") ||
+    lower.startsWith("cat ") ||
+    lower.startsWith("list ") ||
+    lower.startsWith("ls ") ||
+    lower.startsWith("dir ") ||
+    lower.startsWith("write ") ||
+    lower.startsWith("save ") ||
+    lower.startsWith("move ") ||
+    lower.startsWith("rename ") ||
+    lower.startsWith("delete ") ||
+    lower.startsWith("del ") ||
+    lower.startsWith("rm ")
+  );
 }
 
 /** Max chars of URL-fetched content to prepend per URL. */
@@ -67,24 +89,54 @@ async function keywordFallback(gw: Gateway, text: string): Promise<string> {
 
   // ─── Pattern: File Read (safe action) ─────────────
   if (lower.startsWith("read ") || lower.startsWith("cat ")) {
-    return tryInvokeTool(gw, "filesystem", "read_file", text.slice(text.indexOf(" ") + 1));
+    const { arg } = parseFirstArg(text.slice(text.indexOf(" ") + 1));
+    if (!arg) return `Usage: read <path>`;
+    return tryInvokeTool(gw, "filesystem", "read_file", arg);
   }
 
   // ─── Pattern: List Directory (safe action) ────────
   if (lower.startsWith("list ") || lower.startsWith("ls ") || lower.startsWith("dir ")) {
-    return tryInvokeTool(gw, "filesystem", "list_dir", text.slice(text.indexOf(" ") + 1));
+    const { arg } = parseFirstArg(text.slice(text.indexOf(" ") + 1));
+    const path = arg || ".";
+    return tryInvokeTool(gw, "filesystem", "list_dir", path);
   }
 
   // ─── Pattern: File Write (dangerous) ──────────────
   if (lower.startsWith("write ") || lower.startsWith("save ")) {
     const rest = text.slice(text.indexOf(" ") + 1);
-    const spaceIdx = rest.indexOf(" ");
-    if (spaceIdx === -1) {
+    const parsed = parseFirstArg(rest);
+    if (!parsed.arg || !parsed.rest) {
       return `Usage: write <path> <content>`;
     }
-    const path = rest.slice(0, spaceIdx);
-    const content = rest.slice(spaceIdx + 1);
-    return tryInvokeToolWithContent(gw, "filesystem", "write_file", path, content);
+    return tryInvokeToolWithContent(gw, "filesystem", "write_file", parsed.arg, parsed.rest);
+  }
+
+  // â”€â”€â”€ Pattern: File Delete (dangerous) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  if (lower.startsWith("delete ") || lower.startsWith("del ") || lower.startsWith("rm ")) {
+    const { arg } = parseFirstArg(text.slice(text.indexOf(" ") + 1));
+    if (!arg) {
+      return `Usage: delete <path>`;
+    }
+    return tryInvokeTool(gw, "filesystem", "delete_file", arg);
+  }
+
+  // â”€â”€â”€ Pattern: File Move/Rename (dangerous) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  if (lower.startsWith("move ") || lower.startsWith("rename ")) {
+    const rest = text.slice(text.indexOf(" ") + 1).trim();
+    const arrowIdx = rest.indexOf(" -> ");
+    if (arrowIdx !== -1) {
+      const from = stripQuotes(rest.slice(0, arrowIdx).trim());
+      const to = stripQuotes(rest.slice(arrowIdx + 4).trim());
+      if (!from || !to) return `Usage: move <from> <to>`;
+      return tryInvokeToolWithContent(gw, "filesystem", "move_file", from, to);
+    }
+    const parsedFrom = parseFirstArg(rest);
+    if (!parsedFrom.arg || !parsedFrom.rest) {
+      return `Usage: move <from> <to>`;
+    }
+    const parsedTo = parseFirstArg(parsedFrom.rest);
+    if (!parsedTo.arg) return `Usage: move <from> <to>`;
+    return tryInvokeToolWithContent(gw, "filesystem", "move_file", parsedFrom.arg, parsedTo.arg);
   }
 
   // ─── Pattern: Browser ─────────────────────────────
@@ -127,10 +179,46 @@ async function keywordFallback(gw: Gateway, text: string): Promise<string> {
     `  "read <path>" — read a file\n` +
     `  "list <path>" — list directory\n` +
     `  "write <path> <content>" — write a file (needs /confirm)\n` +
+    `  "move <from> <to>" — move/rename a file (needs /confirm)\n` +
+    `  "delete <path>" — delete a file (needs /confirm)\n` +
     `  "run <command>" — shell (needs /confirm)\n` +
     `  "fetch <url>" — network (needs /confirm)\n` +
     `  "send <contact> <msg>" — messaging (needs /confirm)`
   );
+}
+
+function parseFirstArg(input: string): { arg: string | null; rest: string } {
+  let s = input.trim();
+  if (!s) return { arg: null, rest: "" };
+
+  const firstChar = s[0];
+  if (firstChar === "\"" || firstChar === "'") {
+    const quote = firstChar;
+    let idx = 1;
+    let value = "";
+    while (idx < s.length) {
+      const ch = s[idx];
+      if (ch === quote) {
+        const rest = s.slice(idx + 1).trimStart();
+        return { arg: value, rest };
+      }
+      value += ch;
+      idx += 1;
+    }
+    return { arg: value, rest: "" };
+  }
+
+  const spaceIdx = s.indexOf(" ");
+  if (spaceIdx === -1) return { arg: s, rest: "" };
+  return { arg: s.slice(0, spaceIdx), rest: s.slice(spaceIdx + 1).trimStart() };
+}
+
+function stripQuotes(value: string): string {
+  const v = value.trim();
+  if ((v.startsWith("\"") && v.endsWith("\"")) || (v.startsWith("'") && v.endsWith("'"))) {
+    return v.slice(1, -1);
+  }
+  return v;
 }
 
 async function tryInvokeTool(

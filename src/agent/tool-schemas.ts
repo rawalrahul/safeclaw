@@ -100,33 +100,33 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
         schemas.push(
           {
             name: "read_file",
-            description: "Read the contents of a file. The path is relative to the workspace directory.",
+            description: "Read the contents of a file. The path can be relative to the workspace directory or an absolute path inside it.",
             parameters: {
               type: "object",
               properties: {
-                path: { type: "string", description: "File path relative to workspace" },
+                path: { type: "string", description: "File path relative to workspace or absolute within workspace" },
               },
               required: ["path"],
             },
           },
           {
             name: "list_dir",
-            description: "List the contents of a directory. The path is relative to the workspace directory. Use '.' or empty string for the workspace root.",
+            description: "List the contents of a directory. The path can be relative to the workspace directory or an absolute path inside it. Use '.' or empty string for the workspace root.",
             parameters: {
               type: "object",
               properties: {
-                path: { type: "string", description: "Directory path relative to workspace (default: '.')" },
+                path: { type: "string", description: "Directory path relative to workspace or absolute within workspace (default: '.')" },
               },
               required: [],
             },
           },
           {
             name: "write_file",
-            description: "Write content to a file (creates or overwrites). The path is relative to the workspace directory. This action requires owner confirmation.",
+            description: "Write content to a file (creates or overwrites). The path can be relative to the workspace directory or an absolute path inside it. This action requires owner confirmation.",
             parameters: {
               type: "object",
               properties: {
-                path: { type: "string", description: "File path relative to workspace" },
+                path: { type: "string", description: "File path relative to workspace or absolute within workspace" },
                 content: { type: "string", description: "Content to write" },
               },
               required: ["path", "content"],
@@ -134,13 +134,25 @@ export function buildToolSchemas(enabledTools: ToolDefinition[]): LLMToolSchema[
           },
           {
             name: "delete_file",
-            description: "Delete a file. The path is relative to the workspace directory. This action requires owner confirmation.",
+            description: "Delete a file. The path can be relative to the workspace directory or an absolute path inside it. This action requires owner confirmation.",
             parameters: {
               type: "object",
               properties: {
-                path: { type: "string", description: "File path relative to workspace" },
+                path: { type: "string", description: "File path relative to workspace or absolute within workspace" },
               },
               required: ["path"],
+            },
+          },
+          {
+            name: "move_file",
+            description: "Move or rename a file. Paths can be relative to the workspace directory or absolute paths inside it. This action requires owner confirmation.",
+            parameters: {
+              type: "object",
+              properties: {
+                from: { type: "string", description: "Source path (relative to workspace or absolute within workspace)" },
+                to: { type: "string", description: "Destination path (relative to workspace or absolute within workspace)" },
+              },
+              required: ["from", "to"],
             },
           }
         );
@@ -326,6 +338,7 @@ export function resolveToolCall(toolCallName: string): {
     list_dir: { toolName: "filesystem", action: "list_dir" },
     write_file: { toolName: "filesystem", action: "write_file" },
     delete_file: { toolName: "filesystem", action: "delete_file" },
+    move_file: { toolName: "filesystem", action: "move_file" },
     browse_web: { toolName: "browser", action: "browse_web" },
     memory_write: { toolName: "memory", action: "memory_write" },
     memory_read: { toolName: "memory", action: "memory_read" },
@@ -372,6 +385,12 @@ export function extractToolDetails(
       return {
         target: input.path as string,
         description: `${toolCallName}: ${input.path}`,
+      };
+    case "move_file":
+      return {
+        target: input.from as string,
+        content: input.to as string,
+        description: `move_file: ${input.from} -> ${input.to}`,
       };
     case "list_dir":
       return {

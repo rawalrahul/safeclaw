@@ -60,6 +60,7 @@ export type ActionType =
   | "read_file"
   | "list_dir"
   | "delete_file"
+  | "move_file"
   | "exec_shell"
   | "exec_shell_bg"
   | "process_poll"

@@ -1,5 +1,6 @@
-import { readFile, writeFile, unlink, readdir, stat, lstat, realpath } from "node:fs/promises";
-import { resolve, relative } from "node:path";
+import { readFile, writeFile, unlink, readdir, stat, lstat, realpath, rename } from "node:fs/promises";
+import { resolve, relative, isAbsolute } from "node:path";
+import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import type { ActionType } from "../core/types.js";
 import { ensureDir } from "../storage/persistence.js";
@@ -14,8 +15,12 @@ export async function resolveSafePath(
 ): Promise<string> {
   await ensureDir(workspaceDir);
 
-  const resolved = resolve(workspaceDir, userPath);
-  const rel = relative(workspaceDir, resolved);
+  const workspaceRoot = resolve(workspaceDir);
+  const normalized = normalizeInputPath(userPath);
+  const resolved = isAbsolute(normalized)
+    ? resolve(normalized)
+    : resolve(workspaceRoot, normalized);
+  const rel = relative(workspaceRoot, resolved);
 
   // Check for path traversal (resolved path outside workspace)
   if (rel.startsWith("..") || resolve(resolved) !== resolved.replace(/[\\/]+$/, "")) {
@@ -26,7 +31,7 @@ export async function resolveSafePath(
   if (existsSync(resolved)) {
     try {
       const realPath = await realpath(resolved);
-      const realRel = relative(workspaceDir, realPath);
+      const realRel = relative(workspaceRoot, realPath);
       if (realRel.startsWith("..")) {
         throw new Error(`Path rejected: symlink "${userPath}" points outside the workspace.`);
       }
@@ -37,6 +42,13 @@ export async function resolveSafePath(
   }
 
   return resolved;
+}
+
+function normalizeInputPath(userPath: string): string {
+  const normalizedSpaces = userPath.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+  if (normalizedSpaces === "~") return homedir();
+  if (normalizedSpaces.startsWith("~/")) return homedir() + normalizedSpaces.slice(1);
+  return normalizedSpaces;
 }
 
 // ─── Real Filesystem Operations ──────────────────────────────
@@ -112,5 +124,25 @@ export async function fsDeleteFile(
     action: "delete_file",
     description: `Delete file: ${path}`,
     result: `File deleted: ${path}`,
+  };
+}
+
+export async function fsMoveFile(
+  workspaceDir: string,
+  fromPath: string,
+  toPath: string
+): Promise<{ action: ActionType; description: string; result: string }> {
+  const safeFrom = await resolveSafePath(workspaceDir, fromPath);
+  const safeTo = await resolveSafePath(workspaceDir, toPath);
+
+  // Ensure destination parent directory exists
+  const parentDir = resolve(safeTo, "..");
+  await ensureDir(parentDir);
+
+  await rename(safeFrom, safeTo);
+  return {
+    action: "move_file",
+    description: `Move file: ${fromPath} -> ${toPath}`,
+    result: `File moved: ${fromPath} -> ${toPath}`,
   };
 }
