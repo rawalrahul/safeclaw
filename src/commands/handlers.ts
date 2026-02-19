@@ -472,6 +472,16 @@ async function handleAudit(
   gw: Gateway,
   args: string[]
 ): Promise<{ reply: string }> {
+  // /audit verbose [on|off]  — toggle verbose live thinking messages
+  if (args[0] === "verbose") {
+    const sub = args[1]?.toLowerCase();
+    if (sub === "on")  { gw.verboseAudit = true;  return { reply: "Verbose audit: ON" }; }
+    if (sub === "off") { gw.verboseAudit = false; return { reply: "Verbose audit: OFF" }; }
+    // toggle
+    gw.verboseAudit = !gw.verboseAudit;
+    return { reply: `Verbose audit: ${gw.verboseAudit ? "ON" : "OFF"}` };
+  }
+
   const count = parseInt(args[0] || "10", 10);
   const events = await gw.audit.recent(count);
   if (events.length === 0) return { reply: "No audit events yet." };
@@ -517,7 +527,10 @@ Permissions:
 
 Info:
   /status — Show gateway state
-  /audit [n] — Show last N audit events
+  /audit [n] — Show last N audit events (default 10)
+  /audit verbose — Toggle verbose mode (live thinking + tool messages)
+  /audit verbose on — Enable verbose mode
+  /audit verbose off — Disable verbose mode
   /skills — List prompt skills from ~/.safeclaw/prompt-skills/
   /help — Show this help
 

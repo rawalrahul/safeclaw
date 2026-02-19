@@ -263,6 +263,11 @@ export async function runAgent(gw: Gateway, userText: string): Promise<string> {
       if (inline) response = inline;
     }
 
+    // Emit LLM thinking text before handling tool calls
+    if (gw.verboseAudit && response.toolCalls.length > 0 && response.text) {
+      await gw.progressCallback?.(`💭 ${response.text.trim()}`);
+    }
+
     // Handle tool calls
     if (response.toolCalls.length > 0) {
       const result = await handleToolCalls(gw, response, toolSchemas, model, systemPrompt);
@@ -347,8 +352,15 @@ async function handleToolCalls(
     if (isSafe) {
       await gw.audit.log("tool_called", { tool: toolName, action, input: JSON.stringify(tc.input) });
       await gw.audit.log("action_executed", { tool: toolName, action, target: details.target });
+      if (gw.verboseAudit) {
+        await gw.progressCallback?.(`🔧 ${toolName}/${action}: ${details.description}`);
+      }
       const rawResult = await executeToolAction(gw, toolName, action as ActionType, details);
       const result = guardToolResult(rawResult);
+      if (gw.verboseAudit) {
+        const preview = result.slice(0, 200);
+        await gw.progressCallback?.(`✅ ${toolName}: ${preview}${result.length > 200 ? "…" : ""}`);
+      }
       await gw.audit.log("tool_result", { tool: toolName, action, result: result.slice(0, 500) });
       addToolResult(gw.conversation, tc.id, tc.name, result);
       executedSafeTools = true;
@@ -408,6 +420,9 @@ async function handleToolCalls(
       }
 
       if (followUp.toolCalls.length > 0) {
+        if (gw.verboseAudit && followUp.text) {
+          await gw.progressCallback?.(`💭 ${followUp.text.trim()}`);
+        }
         return await handleToolCalls(gw, followUp, toolSchemas, model, systemPrompt);
       }
 

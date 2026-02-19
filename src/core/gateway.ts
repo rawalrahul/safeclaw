@@ -41,6 +41,11 @@ export class Gateway {
    * Cleared after each agent run.
    */
   progressCallback: ((msg: string) => Promise<void>) | null = null;
+  /**
+   * When true, the agent loop emits live Telegram messages for LLM thinking text
+   * and safe tool calls/results. Persists across sleeps until toggled off.
+   */
+  verboseAudit: boolean = false;
 
   private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
   private onAutoSleep?: () => void;
